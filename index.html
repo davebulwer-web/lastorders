@@ -272,6 +272,7 @@ h2{
       <span class="spec">PINT <b>9&times;17</b></span>
       <span class="spec">COIN <b>17&times;17</b></span>
     </div>
+    <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -393,7 +394,7 @@ h2{
     document.getElementById('card-title').textContent = res.title;
     document.getElementById('card-you').textContent = res.score;
     document.getElementById('card-rival-label').textContent = state.def.rival.toUpperCase();
-    document.getElementById('card-rival').textContent = state.def.target;
+    document.getElementById('card-rival').textContent = res.rivalScore;
     document.getElementById('card-best').textContent = state.best[id];
     document.getElementById('card-verdict').innerHTML = res.verdict;
     show('card');
@@ -456,6 +457,35 @@ h2{
   }
   function fillCols(n, fn) { var c = []; for (var i = 0; i < n; i++) c.push(fn(i, n)); return c; }
 
+  /* ---- opponent helpers, shared by every game's AI ---- */
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function gauss() {
+    var u = 1 - Math.random(), v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  // Pick the cell of an na x np grid of shot values whose neighbourhood is
+  // best, not the single best cell: a narrow peak is worthless to a player
+  // who can miss by a hair.
+  function bestOnGrid(vals, na, np) {
+    var best = { i: 0, j: 0, v: -Infinity };
+    for (var i = 0; i < na; i++) {
+      for (var j = 0; j < np; j++) {
+        var v = vals[i * np + j], w = 1;
+        for (var di = -1; di <= 1; di++) {
+          for (var dj = -1; dj <= 1; dj++) {
+            if (!di && !dj) continue;
+            var ii = i + di, jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= na || jj >= np) continue;
+            v += 0.35 * vals[ii * np + jj]; w += 0.35;
+          }
+        }
+        v /= w;
+        if (v > best.v + 1e-9 || (Math.abs(v - best.v) < 1e-9 && Math.random() < 0.5)) best = { i: i, j: j, v: v };
+      }
+    }
+    return best;
+  }
+
   // the pint somebody left on the side, 9x17
   function pint(x, y, glass, beer) {
     var rows = fillCols(17, function () { return 9; });
@@ -474,9 +504,8 @@ h2{
     id: 'bar-skittles',
     name: 'Bar Skittles',
     sub: 'Devil Among the Tailors',
-    blurb: 'Nine pins, three balls, and a ball on a chain. Throw it wide and let the chain sweep it through the middle, or go straight at the front three and hope they topple.',
+    blurb: 'Nine pins and a ball on a chain. Three balls a turn against Reg, first to 31. Throw it wide and let the chain sweep it through the middle.',
     rival: 'Reg',
-    target: 17,
     available: true,
 
     create: function (api) {
@@ -512,12 +541,16 @@ h2{
         down: '#9c8d6f', downLo: '#6f6350',
         shadow: 'rgba(0,0,0,.34)',
         glass: '#c9b27a', beer: '#c98a28',
-        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a'
+        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a', ember: '#c4502a'
       };
 
       // --- state ---
-      var pins, ball, pending, stage, t, aim, power, ballNo, score, thisBall, settleT, done;
+      var GOAL = 31;                      // first to 31, once both have had the same number of turns
+      // Reg: steady arm, not a machine. Errors are one standard deviation.
+      var AI = { name: 'Reg', aimErr: 0.03, powErr: 0.045, think: 0.9, swing: 0.7 };
+      var pins, ball, pending, stage, t, aim, power, ballNo, settleT, done;
       var chain;                          // live chain length — shortens as it winds on
+      var players, cur, round, upAtThrow, note, plan;
 
       function sy(wy) { return YO + wy * YS; }
 
@@ -536,15 +569,22 @@ h2{
       }
 
       function init() {
-        pins = layout();
+        players = [{ name: 'You', score: 0 }, { name: AI.name, score: 0 }];
+        cur = 0; round = 1; done = false; note = '';
         pending = [];
-        ballNo = 1; score = 0; thisBall = 0; done = false;
+        startTurn();
+      }
+
+      // a turn is three balls at a fresh set of nine
+      function startTurn() {
+        pins = layout();
+        ballNo = 1;
         newBall();
       }
 
       function newBall() {
         stage = 'aim';
-        t = 0; aim = 0; power = 0; thisBall = 0; settleT = 0;
+        t = 0; aim = 0; power = 0; settleT = 0; plan = null;
         chain = L0;
         ball = { x: HANG.x, y: HANG.y, vx: 0, vy: 0, live: false, taut: false, spin: 0, prevAng: null };
       }
@@ -557,12 +597,21 @@ h2{
       // aim sweeps across the throwable arc: up-left, over the top, to up-right
       var AIM_A = -170 * Math.PI / 180, AIM_B = -10 * Math.PI / 180;
 
+      function liveAim() {
+        if (cur === 1 && plan && t > 0.5) return plan.aim;
+        return AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
+      }
+      function livePower() {
+        return (cur === 1 && plan) ? Math.min(plan.power, t / AI.swing) : tri(t, 1.05);
+      }
+
       function press() {
+        if (cur !== 0) return;            // Reg's throw: hands off
         if (stage === 'aim') {
-          aim = AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
+          aim = liveAim();
           stage = 'power'; t = 0;
         } else if (stage === 'power') {
-          power = tri(t, 1.05);
+          power = livePower();
           throwBall();
         }
       }
@@ -576,6 +625,7 @@ h2{
         ball.taut = true;
         ball.prevAng = Math.atan2(HANG.y - POLE.y, HANG.x - POLE.x);
         ball.live = true;
+        upAtThrow = standing();
         stage = 'throw';
         t = 0;
       }
@@ -597,17 +647,21 @@ h2{
           if (d > TOPPLE_R || d === 0) continue;
           var dot = (dx / d) * Math.cos(pin.ang) + (dy / d) * Math.sin(pin.ang);
           if (dot < 0.35) continue;       // only what it actually falls towards
-          if (alreadyPending(p)) continue;
-          pending.push({ pin: p, t: 0.09, fx: pin.x, fy: pin.y, e: passed });
+          if (alreadyPending(i)) continue;
+          // by index, not reference, so the whole table can be copied as data
+          pending.push({ pi: i, t: 0.09, fx: pin.x, fy: pin.y, e: passed });
         }
       }
 
-      function alreadyPending(p) {
-        for (var i = 0; i < pending.length; i++) if (pending[i].pin === p) return true;
+      function alreadyPending(i) {
+        for (var k = 0; k < pending.length; k++) if (pending[k].pi === i) return true;
         return false;
       }
 
-      function update(dt) {
+      // One fixed step of the table. Returns true once the ball has died and
+      // every falling pin has landed. Reg runs this same function, on a copy
+      // of the table, to try out shots before he throws.
+      function physics(dt) {
         t += dt;
 
         // queued chain reactions
@@ -615,11 +669,11 @@ h2{
           pending[i].t -= dt;
           if (pending[i].t <= 0) {
             var q = pending.splice(i, 1)[0];
-            if (q.pin.up) topple(q.pin, q.fx, q.fy, q.e);
+            if (pins[q.pi].up) topple(pins[q.pi], q.fx, q.fy, q.e);
           }
         }
 
-        if (stage !== 'throw' || !ball.live) return;
+        if (stage !== 'throw' || !ball.live) return false;
 
         // integrate
         ball.x += ball.vx * dt;
@@ -702,8 +756,18 @@ h2{
         var sp = Math.hypot(ball.vx, ball.vy);
         if (sp < 14 * S || t > 13) {
           settleT += dt;
-          if (settleT > 0.45 && pending.length === 0) finishBall();
+          if (settleT > 0.45 && pending.length === 0) return true;
         } else settleT = 0;
+        return false;
+      }
+
+      function update(dt) {
+        if (stage === 'throw') {
+          if (physics(dt)) finishBall();
+          return;
+        }
+        t += dt;
+        if (cur === 1 && !done) aiTick();
       }
 
       function standing() {
@@ -713,15 +777,70 @@ h2{
       }
 
       function finishBall() {
-        var downNow = 9 - standing();
-        thisBall = downNow;
-        score += downNow;
+        var felled = upAtThrow - standing();
+        players[cur].score += felled;
         ball.live = false;
+        note = (cur === 0 ? 'You' : AI.name) + ' felled ' + felled +
+               (standing() === 0 ? ', and that is all nine' : '');
 
-        if (ballNo >= 3) { done = true; stage = 'over'; return; }
+        if (ballNo >= 3) { endTurn(); return; }
         ballNo++;
         if (standing() === 0) pins = layout();   // all nine over: they go back up
         newBall();
+      }
+
+      function endTurn() {
+        if (cur === 1) {
+          // both have had the same number of turns: is anyone there yet?
+          var a = players[0].score, b = players[1].score;
+          if ((a >= GOAL || b >= GOAL) && a !== b) { done = true; stage = 'over'; return; }
+          round++;
+        }
+        cur = 1 - cur;
+        startTurn();
+      }
+
+      /* ---- the opponent ----------------------------------------- */
+      function snap() {
+        return JSON.stringify({ pins: pins, ball: ball, pending: pending, stage: stage, t: t,
+          aim: aim, power: power, settleT: settleT, chain: chain, upAtThrow: upAtThrow });
+      }
+      function restore(s) {
+        var o = JSON.parse(s);
+        pins = o.pins; ball = o.ball; pending = o.pending; stage = o.stage; t = o.t;
+        aim = o.aim; power = o.power; settleT = o.settleT; chain = o.chain; upAtThrow = o.upAtThrow;
+      }
+
+      // Reg tries a spread of lines and weights on a copy of the table, keeps
+      // the one whose neighbours also do well (so a small slip still pays),
+      // then throws it with a human amount of error.
+      function planShot() {
+        var s0 = snap(), NA = 28, NP = 9, vals = [];
+        for (var i = 0; i < NA; i++) {
+          for (var j = 0; j < NP; j++) {
+            restore(s0);
+            aim = AIM_A + (AIM_B - AIM_A) * (i + 0.5) / NA;
+            power = (j + 0.5) / NP;
+            throwBall();
+            for (var n = 0; n < 1700 && !physics(STEP); n++);
+            vals.push(upAtThrow - standing());
+          }
+        }
+        restore(s0);
+        var best = bestOnGrid(vals, NA, NP);
+        return {
+          aim: clamp(AIM_A + (AIM_B - AIM_A) * (best.i + 0.5) / NA + gauss() * AI.aimErr, AIM_A, AIM_B),
+          power: clamp((best.j + 0.5) / NP + gauss() * AI.powErr, 0, 1)
+        };
+      }
+
+      function aiTick() {
+        if (stage === 'aim') {
+          if (!plan) { plan = planShot(); t = 0; }
+          if (t > AI.think) { aim = plan.aim; stage = 'power'; t = 0; }
+        } else if (stage === 'power') {
+          if (t > AI.swing + 0.2) { power = plan.power; throwBall(); }
+        }
       }
 
       /* ---- render ---------------------------------------------- */
@@ -759,11 +878,11 @@ h2{
 
         // aim guide
         if (stage === 'aim') {
-          var liveAim = AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
+          var la = liveAim();
           for (var r = 28; r <= 88; r += 20) {
-            px(HANG.x + Math.cos(liveAim) * r - 1, sy(HANG.y + Math.sin(liveAim) * r) - 1, 3, 3, C.brass);
+            px(HANG.x + Math.cos(la) * r - 1, sy(HANG.y + Math.sin(la) * r) - 1, 3, 3, C.brass);
           }
-          px(HANG.x + Math.cos(liveAim) * 104 - 2, sy(HANG.y + Math.sin(liveAim) * 104) - 2, 5, 5, C.ember);
+          px(HANG.x + Math.cos(la) * 104 - 2, sy(HANG.y + Math.sin(la) * 104) - 2, 5, 5, C.ember);
         }
 
         // shadows, then bodies, back to front
@@ -837,7 +956,7 @@ h2{
       function drawMeter() {
         var x = 10, y0 = 50, h = 170;
         px(x - 2, y0 - 2, 16, h + 4, C.meter);
-        var p = tri(t, 1.05);
+        var p = livePower();
         var fill = Math.round(h * p);
         for (var i = 0; i < fill; i++) {
           var f = i / h;
@@ -849,21 +968,28 @@ h2{
 
       /* ---- what the shell asks for ----------------------------- */
       function hud() {
-        return '<span>BALL <b>' + Math.min(ballNo, 3) + '</b>/3</span>' +
-               '<span>SCORE <b>' + score + '</b></span>' +
-               '<span>STANDING <b>' + standing() + '</b></span>' +
-               '<span>CHAIN <b>' + Math.round(chain) + '</b></span>' +
-               '<span class="rival">REG <b>17</b></span>';
+        function who(i, label) {
+          return '<span' + (cur === i ? ' class="rival"' : '') + '>' + label + ' <b>' + players[i].score + '</b></span>';
+        }
+        return '<span>ROUND <b>' + round + '</b></span>' + who(0, 'YOU') + who(1, 'REG') +
+               '<span>BALL <b>' + Math.min(ballNo, 3) + '</b>/3</span>' +
+               '<span>FIRST TO <b>' + GOAL + '</b></span>';
       }
 
       function prompt() {
-        if (stage === 'aim') return 'Send it round the post.<br><span>Sideways swings it. Straight at the post just bounces off</span>';
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (cur === 1) {
+          if (stage === 'throw') return 'Reg lets it go.<br><span>Watch and learn, he says</span>';
+          return 'Reg\'s throw.<br>' + (sub || '<span>He sizes it up</span>');
+        }
+        if (stage === 'aim') return 'Your throw. Send it round the post.<br>' + (sub || '<span>Sideways swings it. Straight at the post just bounces off</span>');
         if (stage === 'power') return 'Now the weight of the swing.<br><span>More arm, more trips round before it dies</span>';
         if (stage === 'throw') return '&nbsp;<br><span>Let it swing</span>';
         return '&nbsp;';
       }
 
       function action() {
+        if (cur === 1) return 'Reg is up';
         if (stage === 'aim') return 'Set line';
         if (stage === 'power') return 'Throw';
         return '...';
@@ -872,15 +998,14 @@ h2{
       function settled() { return done; }
 
       function result() {
-        var v;
-        if (score >= 24) v = 'Twenty-four or better. <b>Reg puts his pint down and asks who taught you.</b>';
-        else if (score > 17) v = 'You have beaten Reg. <b>He will want another go.</b>';
-        else if (score === 17) v = 'Level with Reg. <b>Nothing settled.</b>';
-        else if (score >= 12) v = 'Respectable. <b>Reg nods once and says nothing.</b>';
-        else v = 'Reg has seen worse, <b>but not this week.</b>';
+        var a = players[0].score, b = players[1].score, v;
+        if (a - b >= 10) v = 'Won by ' + (a - b) + '. <b>Reg puts his pint down and asks who taught you.</b>';
+        else if (a > b) v = 'You have beaten Reg. <b>He will want another go.</b>';
+        else if (b - a >= 10) v = 'Reg has seen worse, <b>but not this week.</b>';
+        else v = 'Close, but Reg takes it. <b>He nods once and says nothing.</b>';
         return {
-          score: score,
-          title: score > 17 ? 'You take the hand' : (score === 17 ? 'A draw' : 'Reg takes the hand'),
+          score: a, rivalScore: b,
+          title: a > b ? 'You take the game' : 'Reg takes the game',
           verdict: v
         };
       }
@@ -903,9 +1028,8 @@ h2{
     id: 'shove',
     name: 'Shove Ha\'penny',
     sub: 'Five coins, nine beds',
-    blurb: 'Shove a coin up a chalked board and leave it sitting clean inside a bed. Three in every bed wins it.',
+    blurb: 'Shove a coin up a chalked board and leave it sitting clean inside a bed. Turn about with Edna; first to close all nine beds wins it.',
     rival: 'Edna',
-    target: 9,
     available: true,
 
     create: function (api) {
@@ -917,7 +1041,7 @@ h2{
       var LAUNCH = { x: 240, y: 246 };    // the coin overhangs the near edge, under your palm
       var MU = 195;                       // sliding friction, px/s^2
       var REST = 0.86;                    // coin on coin
-      var TURNS = 3, COINS = 5;
+      var COINS = 5;
       var SPREAD = 0.2;                   // aim sweeps +/- this many radians off straight
       var SLIDE_MIN = 10, SLIDE_MAX = 272; // px a coin slides at empty and full meter
 
@@ -927,13 +1051,18 @@ h2{
         line: '#d9a63c', lineLo: '#8d6417',
         chalkBoard: '#2b2622', chalk: '#ece6da', chalkDim: '#5b544c',
         coin: '#c98a28', coinHi: '#ecc06a', coinLo: '#8d5a16',
-        good: '#9fd16a', dead: '#6f6350',
+        good: '#9fd16a', dead: '#6f6350', gift: '#c4502a',
         shadow: 'rgba(0,0,0,.34)',
         glass: '#c9b27a', beer: '#c98a28',
         meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a', cream: '#f3e6cf'
       };
 
-      var coins, cur, stage, t, aim, power, turn, thrown, chalk, score, done, turnPts, wasted, tallyT;
+      // Edna has played this board for forty years. Errors are one standard deviation.
+      var AI = { name: 'Edna', aimErr: 0.01, powErr: 0.011, think: 0.8, swing: 0.6 };
+
+      // chalk[0] is yours (right of the board), chalk[1] is Edna's (left).
+      // Index 0 is the far bed (bed 9), 8 the near bed (bed 1).
+      var coins, cur, stage, t, aim, power, thrown, chalk, done, who, round, plan, note, tallyT, winner;
 
       function lineY(i) { return LINE0 + i * PITCH; }
       var LAST_LINE = lineY(BEDS);
@@ -944,39 +1073,51 @@ h2{
       }
 
       function init() {
-        chalk = [0, 0, 0, 0, 0, 0, 0, 0, 0];   // index 0 = far bed (bed 9), 8 = near bed (bed 1)
-        score = 0; turn = 1; done = false;
+        chalk = [[0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0]];
+        who = 0; round = 1; done = false; note = ''; winner = -1;
         newTurn();
       }
 
       function newTurn() {
-        coins = []; thrown = 0; turnPts = 0; wasted = 0;
+        coins = []; thrown = 0;
         newCoin();
       }
 
       function newCoin() {
-        stage = 'aim'; t = 0; aim = 0; power = 0;
-        cur = { x: LAUNCH.x, y: LAUNCH.y, vx: 0, vy: 0, on: true, mark: null };
+        stage = 'aim'; t = 0; aim = 0; power = 0; plan = null;
+        cur = { x: LAUNCH.x, y: LAUNCH.y, vx: 0, vy: 0, mark: null };
       }
 
-      function liveAim() { return SPREAD * (2 * tri(t, 1.7) - 1); }
+      function liveAim() {
+        if (who === 1 && plan && t > 0.45) return plan.aim;
+        return SPREAD * (2 * tri(t, 1.7) - 1);
+      }
+      function livePower() {
+        return (who === 1 && plan) ? Math.min(plan.power, t / AI.swing) : tri(t, 1.0);
+      }
 
       function press() {
+        if (who !== 0) return;            // Edna's turn: hands off
         if (stage === 'aim') {
           aim = liveAim(); stage = 'power'; t = 0;
         } else if (stage === 'power') {
-          power = tri(t, 1.0);
-          // the meter maps straight onto how far the coin slides (on a clear
-          // board), so an empty bar barely leaves your hand and a full one
-          // goes off the far end. Every bed is somewhere in between.
-          var dist = SLIDE_MIN + power * (SLIDE_MAX - SLIDE_MIN);
-          var speed = Math.sqrt(2 * MU * dist);
-          cur.vx = Math.sin(aim) * speed;
-          cur.vy = -Math.cos(aim) * speed;
-          coins.push(cur);
-          thrown++;
-          stage = 'slide'; t = 0;
+          power = livePower();
+          note = '';
+          shove();
         }
+      }
+
+      function shove() {
+        // the meter maps straight onto how far the coin slides (on a clear
+        // board), so an empty bar barely leaves your hand and a full one
+        // goes off the far end. Every bed is somewhere in between.
+        var dist = SLIDE_MIN + power * (SLIDE_MAX - SLIDE_MIN);
+        var speed = Math.sqrt(2 * MU * dist);
+        cur.vx = Math.sin(aim) * speed;
+        cur.vy = -Math.cos(aim) * speed;
+        coins.push(cur);
+        thrown++;
+        stage = 'slide'; t = 0;
       }
 
       function moving() {
@@ -984,16 +1125,11 @@ h2{
         return false;
       }
 
-      function update(dt) {
+      // One fixed step of the board. Returns true once every coin has
+      // stopped. Edna runs this same function, on a copy of the board,
+      // to try out shoves before she plays one.
+      function physics(dt) {
         t += dt;
-
-        if (stage === 'tally') {
-          tallyT -= dt;
-          if (tallyT <= 0) endTurn();
-          return;
-        }
-        if (stage !== 'slide') return;
-
         var i, j, c;
         for (i = 0; i < coins.length; i++) {
           c = coins[i];
@@ -1033,9 +1169,23 @@ h2{
         if (!moving() && t > 0.15) {
           // anything that never cleared the near line comes back off the board
           for (i = coins.length - 1; i >= 0; i--) if (coins[i].y - COIN_R > LAST_LINE) coins.splice(i, 1);
-          if (thrown < COINS) newCoin();
-          else tally();
+          return true;
         }
+        return false;
+      }
+
+      function update(dt) {
+        if (stage === 'slide') {
+          if (physics(dt)) { if (thrown < COINS) newCoin(); else tally(); }
+          return;
+        }
+        t += dt;
+        if (stage === 'tally') {
+          tallyT -= dt;
+          if (tallyT <= 0) endTurn();
+          return;
+        }
+        if (who === 1 && !done) aiTick();
       }
 
       function bedOf(c) {
@@ -1046,26 +1196,89 @@ h2{
         return -1;
       }
 
-      function tally() {
-        stage = 'tally'; tallyT = 1.4; turnPts = 0; wasted = 0;
+      function closedCount(arr) {
+        var n = 0;
+        for (var k = 0; k < BEDS; k++) if (arr[k] >= 3) n++;
+        return n;
+      }
+      function marks(arr) { var n = 0; for (var k = 0; k < BEDS; k++) n += arr[k]; return n; }
+
+      // What the coins now on the board are worth to player p, under the
+      // house rules: a coin in a bed chalks it for you; once you have
+      // closed that bed the point goes to your opponent instead, unless
+      // they have closed it too; and nobody can be handed the point that
+      // would win them the game — that one has to be shoved.
+      function reckon(p, apply) {
+        var mine = chalk[p].slice(), theirs = chalk[1 - p].slice();
+        var r = { own: 0, gift: 0, waste: 0 };
         for (var i = 0; i < coins.length; i++) {
-          var k = bedOf(coins[i]);
-          if (k < 0) { coins[i].mark = 'dead'; continue; }
-          if (chalk[k] < 3) { chalk[k]++; score++; turnPts++; coins[i].mark = 'good'; }
-          else { wasted++; coins[i].mark = 'dead'; }
+          var k = bedOf(coins[i]), m;
+          if (k < 0) m = 'dead';
+          else if (mine[k] < 3) { mine[k]++; r.own++; m = 'good'; }
+          else if (theirs[k] < 3 && !(theirs[k] === 2 && closedCount(theirs) === BEDS - 1)) { theirs[k]++; r.gift++; m = 'gift'; }
+          else { r.waste++; m = 'dead'; }
+          if (apply) coins[i].mark = m;
         }
+        if (apply) { chalk[p] = mine; chalk[1 - p] = theirs; }
+        return r;
       }
 
-      function closed() {
-        var n = 0;
-        for (var k = 0; k < BEDS; k++) if (chalk[k] >= 3) n++;
-        return n;
+      function tally() {
+        stage = 'tally'; tallyT = 1.6;
+        var r = reckon(who, true);
+        var name = who === 0 ? 'You' : AI.name;
+        note = r.own === 0 ? name + ' chalked nothing' :
+               name + ' chalked ' + r.own;
+        if (r.gift) note += ', and gave ' + r.gift + ' away';
       }
 
       function endTurn() {
-        if (turn >= TURNS || closed() === BEDS) { done = true; stage = 'over'; return; }
-        turn++;
+        if (closedCount(chalk[who]) === BEDS) { winner = who; done = true; stage = 'over'; return; }
+        if (who === 1) round++;
+        who = 1 - who;
         newTurn();
+      }
+
+      /* ---- the opponent ----------------------------------------- */
+      function snap() { return JSON.stringify({ coins: coins, cur: cur, stage: stage, t: t, thrown: thrown }); }
+      function restore(s) {
+        var o = JSON.parse(s);
+        coins = o.coins; cur = o.cur; stage = o.stage; t = o.t; thrown = o.thrown;
+      }
+
+      // Edna tries a spread of lines and weights on a copy of the board,
+      // scores where everything ends up (her own beds good, gifts to you
+      // bad), keeps the shove whose neighbours also do well, then plays it
+      // with a human amount of error.
+      function planShot() {
+        var s0 = snap(), NA = 11, NP = 120, vals = [];
+        var base = reckon(1, false);
+        for (var i = 0; i < NA; i++) {
+          for (var j = 0; j < NP; j++) {
+            restore(s0);
+            aim = -SPREAD + 2 * SPREAD * (i + 0.5) / NA;
+            power = (j + 0.5) / NP;
+            shove();
+            for (var n = 0; n < 1200 && !physics(STEP); n++);
+            var r = reckon(1, false);
+            vals.push((r.own - base.own) - 0.9 * (r.gift - base.gift));
+          }
+        }
+        restore(s0);
+        var best = bestOnGrid(vals, NA, NP);
+        return {
+          aim: clamp(-SPREAD + 2 * SPREAD * (best.i + 0.5) / NA + gauss() * AI.aimErr, -SPREAD, SPREAD),
+          power: clamp((best.j + 0.5) / NP + gauss() * AI.powErr, 0, 1)
+        };
+      }
+
+      function aiTick() {
+        if (stage === 'aim') {
+          if (!plan) { plan = planShot(); t = 0; }
+          if (t > AI.think) { aim = plan.aim; stage = 'power'; t = 0; }
+        } else if (stage === 'power') {
+          if (t > AI.swing + 0.2) { power = plan.power; note = ''; shove(); }
+        }
       }
 
       /* ---- render ---------------------------------------------- */
@@ -1084,15 +1297,11 @@ h2{
         // lines
         for (var i = 0; i <= BEDS; i++) px(BX0, lineY(i), BX1 - BX0, 1, C.line);
 
-        // chalk boards either side: yours on the right, the bed number on the left
+        // chalk boards either side: yours on the right, Edna's on the left
         for (var k = 0; k < BEDS; k++) {
           var cy = lineY(k) + 3;
-          px(BX1 + 10, cy, 32, PITCH - 5, C.chalkBoard);
-          for (var m = 0; m < 3; m++) px(BX1 + 16 + m * 8, cy + 3, 2, PITCH - 11, m < chalk[k] ? C.chalk : C.chalkDim);
-          if (chalk[k] >= 3) px(BX1 + 12, cy + Math.floor((PITCH - 5) / 2) - 1, 28, 2, C.chalk);
-          // bed number as pips, 1 nearest you
-          var n = BEDS - k;
-          for (var p = 0; p < n; p++) px(BX0 - 14 - (p % 3) * 4, cy + 2 + Math.floor(p / 3) * 5, 2, 2, C.lineLo);
+          drawChalk(BX1 + 10, cy, chalk[0][k]);
+          drawChalk(BX0 - 42, cy, chalk[1][k]);
         }
 
         // the pint, again
@@ -1111,6 +1320,12 @@ h2{
         if (stage === 'power') drawMeter();
       }
 
+      function drawChalk(x, cy, n) {
+        px(x, cy, 32, PITCH - 5, C.chalkBoard);
+        for (var m = 0; m < 3; m++) px(x + 6 + m * 8, cy + 3, 2, PITCH - 11, m < n ? C.chalk : C.chalkDim);
+        if (n >= 3) px(x + 2, cy + Math.floor((PITCH - 5) / 2) - 1, 28, 2, C.chalk);
+      }
+
       var COIN_ROWS = discRows(17);
 
       function drawCoin(c) {
@@ -1118,6 +1333,7 @@ h2{
         var body = C.coin, hi = C.coinHi;
         if (c.mark === 'good') { body = C.good; hi = C.cream; }
         else if (c.mark === 'dead') { body = C.dead; hi = C.dead; }
+        else if (c.mark === 'gift') { body = C.gift; hi = C.gift; }
         px(x - 7, y + 8, 16, 2, C.shadow);
         // 17x17 disc, base at y+9 so it is centred on the coin
         stack(x, y + 9, COIN_ROWS, fillCols(17, function (i) { return i < 4 ? hi : (i > 13 ? C.coinLo : body); }));
@@ -1126,7 +1342,7 @@ h2{
       function drawMeter() {
         var x = 10, y0 = 50, h = 170;
         px(x - 2, y0 - 2, 16, h + 4, C.meter);
-        var p = tri(t, 1.0);
+        var p = livePower();
         var fill = Math.round(h * p);
         for (var i = 0; i < fill; i++) {
           var f = i / h;
@@ -1137,25 +1353,28 @@ h2{
 
       /* ---- what the shell asks for ----------------------------- */
       function hud() {
-        return '<span>TURN <b>' + turn + '</b>/' + TURNS + '</span>' +
-               '<span>COIN <b>' + Math.min(thrown + (stage === 'slide' || stage === 'tally' ? 0 : 1), COINS) + '</b>/' + COINS + '</span>' +
-               '<span>CHALK <b>' + score + '</b></span>' +
-               '<span>BEDS <b>' + closed() + '</b>/9</span>' +
-               '<span class="rival">EDNA <b>9</b></span>';
+        function side(i, label) {
+          return '<span' + (who === i ? ' class="rival"' : '') + '>' + label + ' <b>' + marks(chalk[i]) + '</b>/27</span>';
+        }
+        return '<span>ROUND <b>' + round + '</b></span>' + side(0, 'YOU') + side(1, 'EDNA') +
+               '<span>COIN <b>' + Math.min(thrown + (stage === 'slide' || stage === 'tally' ? 0 : 1), COINS) + '</b>/' + COINS + '</span>';
       }
 
       function prompt() {
-        if (stage === 'aim') return 'Line it up.<br><span>It goes where it points and stops where the board decides</span>';
-        if (stage === 'power') return 'Now the shove.<br><span>Sit inside a bed, not on a line</span>';
-        if (stage === 'slide') return '&nbsp;<br><span>Easy...</span>';
-        if (stage === 'tally') {
-          var s = turnPts === 0 ? 'Nothing chalked that turn.' : (turnPts === 1 ? 'One for the chalk.' : turnPts + ' for the chalk.');
-          return s + '<br><span>' + (wasted ? 'And ' + wasted + ' wasted on a closed bed or a line' : 'Coins off, next turn') + '</span>';
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (stage === 'tally') return '&nbsp;<br>' + sub;
+        if (who === 1) {
+          if (stage === 'slide') return 'Edna\'s shove.<br><span>Easy...</span>';
+          return 'Edna\'s turn.<br>' + (sub || '<span>She chalks on the left</span>');
         }
+        if (stage === 'aim') return 'Your turn. Line it up.<br>' + (sub || '<span>Your chalk is on the right. Sit inside a bed, not on a line</span>');
+        if (stage === 'power') return 'Now the shove.<br><span>Close a bed and any more in it go to Edna</span>';
+        if (stage === 'slide') return '&nbsp;<br><span>Easy...</span>';
         return '&nbsp;';
       }
 
       function action() {
+        if (who === 1) return 'Edna is up';
         if (stage === 'aim') return 'Set line';
         if (stage === 'power') return 'Shove';
         return '...';
@@ -1164,15 +1383,14 @@ h2{
       function settled() { return done; }
 
       function result() {
-        var v;
-        if (closed() === BEDS) v = 'Every bed closed. <b>Edna rubs out the board and buys you a half.</b>';
-        else if (score > 9) v = 'You have beaten Edna. <b>She says the board has gone slow.</b>';
-        else if (score === 9) v = 'Level with Edna. <b>She chalks it up as hers anyway.</b>';
-        else if (score >= 6) v = 'Not bad. <b>Edna says you have a soft palm.</b>';
-        else v = 'Edna watches the coins go off the end <b>and says nothing, kindly.</b>';
+        var a = marks(chalk[0]), b = marks(chalk[1]), v;
+        if (winner === 0 && b <= 18) v = 'Nine beds closed. <b>Edna rubs out the board and buys you a half.</b>';
+        else if (winner === 0) v = 'You close the last bed. <b>Edna says the board has gone slow.</b>';
+        else if (a >= 22) v = 'One bed short. <b>Edna says that is how she likes it.</b>';
+        else v = 'Edna closes her ninth bed <b>and says nothing, kindly.</b>';
         return {
-          score: score,
-          title: score > 9 ? 'You take the board' : (score === 9 ? 'A draw' : 'Edna takes the board'),
+          score: a, rivalScore: b,
+          title: winner === 0 ? 'You take the board' : 'Edna takes the board',
           verdict: v
         };
       }
@@ -1195,7 +1413,7 @@ h2{
     { id: 'doms', name: 'Dominoes', sub: 'Fives and threes',
       blurb: 'Play to a multiple of five or three and peg it. The old boy by the fire has not lost since 1987.' }
   ].forEach(function (g) {
-    g.available = false; g.rival = '—'; g.target = 0;
+    g.available = false; g.rival = '—';
     register(g);
   });
 
