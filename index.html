@@ -28,9 +28,17 @@
 
 *{ box-sizing: border-box; }
 
+/* The same room the games are played in, out of focus behind the page. */
+body::before{
+  content:""; position: fixed; inset: -40px; z-index: -1;
+  background: var(--ink) url(art/room/backdrop.png) center / cover no-repeat;
+  filter: blur(10px) brightness(.32) saturate(.9);
+}
+
 body{
   margin:0;
   background: var(--ink);
+  position: relative; z-index: 0;
   color: var(--cream);
   font-family: var(--body);
   font-size: 15px;
@@ -223,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and the first two games on it. Everything you see is placeholder blocks — the point is to find out whether the swing feels good before any art gets made.</p>
+    <p class="tagline">The shell, and the first two games on it. Bar Skittles and the room are wearing their first real art; Shove Ha'penny is still placeholder blocks.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -263,16 +271,17 @@ h2{
   <div class="notes">
     <h2>BUILD NOTES</h2>
     <p>Every game is a module that honours one contract — <code>init</code>, <code>update</code>, <code>render</code>, <code>press</code>, <code>settled</code>, <code>result</code> — so the shell never knows what it is running. Adding the next one is a new file, not a new engine.</p>
-    <p>The playfield renders at 480&times;270 (16:9, an exact 4&times; of 1080p) and scales up by whole numbers with nearest-neighbour, so these placeholder blocks are already the exact pixel dimensions the sprites need to be:</p>
+    <p>The playfield renders at 480&times;270 (16:9, an exact 4&times; of 1080p) and scales up by whole numbers with nearest-neighbour, so every sprite is drawn at its exact pixel size, never scaled:</p>
     <div class="specs">
-      <span class="spec">BALL <b>15&times;15</b></span>
-      <span class="spec">SKITTLE <b>13&times;25</b></span>
-      <span class="spec">SKITTLE FALLEN <b>21&times;9</b> / <b>9&times;17</b></span>
-      <span class="spec">POST <b>9&times;50</b></span>
-      <span class="spec">PINT <b>9&times;17</b></span>
+      <span class="spec">BALL <b>14&times;14</b></span>
+      <span class="spec">SKITTLE <b>10&times;24</b></span>
+      <span class="spec">POST <b>12&times;54</b></span>
+      <span class="spec">PINT <b>11&times;17</b></span>
+      <span class="spec">ROOM <b>480&times;270</b></span>
       <span class="spec">COIN <b>17&times;17</b></span>
     </div>
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
+    <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -296,6 +305,28 @@ h2{
 
   var GAMES = [];
   function register(def) { GAMES.push(def); }
+
+  /* ---- art: PNGs in art/, drawn 1:1. Anything that has not loaded
+     (or is missing) returns null, and the game falls back to its
+     placeholder blocks, so the page still plays from a bare index.html. */
+  var ART = {};
+  function art(path) {
+    var im = ART[path];
+    if (!im) { im = ART[path] = new Image(); im.src = 'art/' + path; }
+    return (im.complete && im.naturalWidth) ? im : null;
+  }
+  ['room/backdrop.png', 'room/pint.png', 'skittles/pin.png', 'skittles/ball.png',
+   'skittles/post.png', 'skittles/wood.png'].forEach(art);
+
+  /* ---- the room behind every game: the shell's own layer, drawn
+     first and knocked back so whatever is on the table reads first. */
+  function backdrop(dim) {
+    var im = art('room/backdrop.png');
+    if (im) ctx.drawImage(im, 0, 0);
+    else { ctx.fillStyle = '#1b1109'; ctx.fillRect(0, 0, W, H); }
+    ctx.fillStyle = 'rgba(12,7,3,' + (dim == null ? 0.35 : dim) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
 
   var state = {
     screen: 'room',     // room | play | card
@@ -380,7 +411,7 @@ h2{
 
   function play(def) {
     state.def = def;
-    state.game = def.create({ W: W, H: H });
+    state.game = def.create({ W: W, H: H, art: art, backdrop: backdrop });
     state.game.init();
     lastHud = lastPrompt = lastAct = '';
     acc = 0; last = 0;
@@ -488,6 +519,12 @@ h2{
 
   // the pint somebody left on the side, 9x17
   function pint(x, y, glass, beer) {
+    var im = art('room/pint.png');
+    if (im) {
+      px(x - 5, y - 1, 11, 2, 'rgba(0,0,0,.34)');
+      ctx.drawImage(im, Math.round(x) - (im.width >> 1), Math.round(y) - im.height);
+      return;
+    }
     var rows = fillCols(17, function () { return 9; });
     rows[16] = 7;
     stack(x, y, rows, fillCols(17, function (i) { return i < 3 || i > 14 ? glass : beer; }));
@@ -522,8 +559,13 @@ h2{
       var DIA = { x: 240, y: 92 };        // centre of the pin diamond
       var SPACING = 12 * S;
       var PIN_R = 4 * S, BALL_R = 4 * S;
-      var TABLE = { x0: 16, y0: -60, x1: 464, y1: 392 };
-      var YS = 0.55, YO = 36;             // 3/4 squash
+      // The cushions sit just past the chain's longest reach (240 +/- 192
+      // across, 236 - 192 up), so pulling them in to here changes nothing
+      // about how the ball plays; it only lets the room show round the box.
+      var TABLE = { x0: 36, y0: 24, x1: 444, y1: 392 };
+      // the view: 3/4 squash on the vertical, and the whole table drawn at
+      // VK so the pub shows round it. Physics never sees either.
+      var YS = 0.55, VK = 0.8, VCX = 240, YO = 89;
       var TOPPLE_R = 18 * S;              // how far a falling pin reaches
       var TOPPLE_DECAY = 0.38;            // force a falling pin passes on
       var TOPPLE_MIN = 1.3;               // under this it falls, but takes nothing with it
@@ -535,7 +577,7 @@ h2{
         wood: '#6b4322', woodHi: '#7d5029', woodLo: '#4a2d17', edge: '#35200f',
         line: '#5a371c',
         brass: '#d9a63c', brassLo: '#8d6417',
-        chain: '#7e6c49',
+        chain: '#c9a35a', chainLo: '#5e4a2c',
         ball: '#211d19', ballHi: '#4a443c',
         pin: '#ece0c4', pinLo: '#bba984', band: '#b33a2b',
         down: '#9c8d6f', downLo: '#6f6350',
@@ -552,7 +594,8 @@ h2{
       var chain;                          // live chain length — shortens as it winds on
       var players, cur, round, upAtThrow, note, plan;
 
-      function sy(wy) { return YO + wy * YS; }
+      function sx(wx) { return VCX + (wx - VCX) * VK; }
+      function sy(wy) { return YO + wy * YS * VK; }
 
       function layout() {
         var out = [];
@@ -844,52 +887,65 @@ h2{
       }
 
       /* ---- render ---------------------------------------------- */
-      function render(g) {
-        // ground
-        px(0, 0, W, H, C.floorDark);
-        px(0, sy(TABLE.y1) - 2, W, H, C.floor);
+      var ART_ = api.art;
 
-        // table top
-        var ty0 = sy(TABLE.y0), ty1 = sy(TABLE.y1);
-        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, ty1 - ty0, C.wood);
-        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, 3, C.woodHi);
-        px(TABLE.x0, ty1 - 5, TABLE.x1 - TABLE.x0, 5, C.woodLo);
-        px(TABLE.x0, ty1, TABLE.x1 - TABLE.x0, 3, C.edge);
-        px(TABLE.x0, ty0, 3, ty1 - ty0, C.woodLo);
-        px(TABLE.x1 - 3, ty0, 3, ty1 - ty0, C.woodLo);
-        // a worn ring where the pins always stand
-        for (var a = 0; a < 64; a++) {
-          var an = a / 64 * Math.PI * 2;
-          px(DIA.x + Math.cos(an) * 60, sy(DIA.y + Math.sin(an) * 60), 1, 1, C.line);
+      function render(g) {
+        api.backdrop(0.3);
+
+        // the box: rims on the far side and both ends, open at the near edge
+        var tx0 = Math.round(sx(TABLE.x0)), tx1 = Math.round(sx(TABLE.x1));
+        var ty0 = Math.round(sy(TABLE.y0)), ty1 = Math.round(sy(TABLE.y1));
+        var tw = tx1 - tx0, th = ty1 - ty0, RIM = 6, BACK = 8, FRONT = 5;
+        g.fillStyle = 'rgba(0,0,0,.45)';                          // its shadow on the floor
+        g.fillRect(tx0 - RIM - 3, ty0 - BACK + 4, tw + RIM * 2 + 6, th + BACK + FRONT);
+        var wood = ART_('skittles/wood.png');
+        if (wood) {
+          var ox = (wood.width - tw) >> 1, oy = (wood.height - th) >> 1;
+          g.drawImage(wood, ox, oy, tw, th, tx0, ty0, tw, th);
+          // the rims are the same timber, darker and end-grain on
+          g.drawImage(wood, 0, 0, tw + RIM * 2, BACK, tx0 - RIM, ty0 - BACK, tw + RIM * 2, BACK);
+          g.drawImage(wood, 0, 20, RIM, th, tx0 - RIM, ty0, RIM, th);
+          g.drawImage(wood, 40, 20, RIM, th, tx1, ty0, RIM, th);
+          g.drawImage(wood, 0, 60, tw + RIM * 2, FRONT, tx0 - RIM, ty1, tw + RIM * 2, FRONT);
+          px(tx0 - RIM, ty0 - BACK, tw + RIM * 2, BACK, 'rgba(40,20,8,.55)');
+          px(tx0 - RIM, ty0, RIM, th, 'rgba(40,20,8,.45)');
+          px(tx1, ty0, RIM, th, 'rgba(25,12,4,.6)');
+          px(tx0 - RIM, ty1, tw + RIM * 2, FRONT, 'rgba(30,15,5,.6)');
+        } else {
+          px(tx0 - RIM, ty0 - BACK, tw + RIM * 2, th + BACK + FRONT, C.woodLo);
+          px(tx0, ty0, tw, th, C.wood);
+          px(tx0 - RIM, ty1, tw + RIM * 2, FRONT, C.edge);
         }
+        px(tx0 - RIM, ty0 - BACK, tw + RIM * 2, 1, 'rgba(255,214,150,.35)');  // lamp catching the rim
+        px(tx0 - RIM, ty1, tw + RIM * 2, 1, 'rgba(255,214,150,.3)');
+        px(tx0, ty0, tw, 3, 'rgba(0,0,0,.3)');                    // shade under the far rim
+        px(tx0, ty0, 2, th, 'rgba(0,0,0,.22)');
+        px(tx1 - 2, ty0, 2, th, 'rgba(0,0,0,.22)');
+
+        // the inside faces of the rims, catching nothing but shadow
+        px(tx0 - 1, ty0 - 1, tw + 2, 1, 'rgba(0,0,0,.6)');
+        px(tx0 - 1, ty0, 1, th, 'rgba(0,0,0,.5)');
+        px(tx1, ty0, 1, th, 'rgba(0,0,0,.5)');
 
         // the pint somebody left on the corner
-        pint(426, sy(324), C.glass, C.beer);
-
-        // chain
-        if (stage === 'throw' || stage === 'aim' || stage === 'power') {
-          var bx = ball.x, by = ball.y;
-          var segs = Math.max(2, Math.round(Math.hypot(bx - POLE.x, by - POLE.y) / 5));
-          for (var s = 1; s < segs; s++) {
-            var f = s / segs;
-            px(POLE.x + (bx - POLE.x) * f, sy(POLE.y + (by - POLE.y) * f) - 18, 1, 1, C.chain);
-          }
-        }
+        pint(sx(420), sy(350), C.glass, C.beer);
 
         // aim guide
         if (stage === 'aim') {
           var la = liveAim();
           for (var r = 28; r <= 88; r += 20) {
-            px(HANG.x + Math.cos(la) * r - 1, sy(HANG.y + Math.sin(la) * r) - 1, 3, 3, C.brass);
+            px(sx(HANG.x + Math.cos(la) * r) - 1, sy(HANG.y + Math.sin(la) * r) - 1, 3, 3, C.brass);
           }
-          px(HANG.x + Math.cos(la) * 104 - 2, sy(HANG.y + Math.sin(la) * 104) - 2, 5, 5, C.ember);
+          px(sx(HANG.x + Math.cos(la) * 104) - 2, sy(HANG.y + Math.sin(la) * 104) - 2, 5, 5, C.ember);
         }
 
-        // shadows, then bodies, back to front
+        // bodies, back to front; the chain goes over everything at the
+        // post's height, so it is drawn last
         var items = [];
         for (var i = 0; i < pins.length; i++) items.push({ y: pins[i].y, kind: 'pin', ref: pins[i] });
         items.push({ y: POLE.y, kind: 'pole' });
-        if (ball.live || stage === 'aim' || stage === 'power') items.push({ y: ball.y, kind: 'ball' });
+        var showBall = ball.live || stage === 'aim' || stage === 'power';
+        if (showBall) items.push({ y: ball.y, kind: 'ball' });
         items.sort(function (a, b) { return a.y - b.y; });
 
         for (var n = 0; n < items.length; n++) {
@@ -898,8 +954,22 @@ h2{
           else if (it.kind === 'pole') drawPole();
           else drawBall();
         }
+        if (showBall) drawChain();
 
         if (stage === 'power') drawMeter();
+      }
+
+      var POST_TOP = 50;                  // the chain's swivel, px above the post's foot
+
+      // a chain of alternating light and dark links from the swivel to the ball
+      function drawChain() {
+        var x0 = sx(POLE.x), y0 = sy(POLE.y) - POST_TOP;
+        var x1 = sx(ball.x), y1 = sy(ball.y) - 12;
+        var steps = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+        for (var s = 1; s < steps; s++) {
+          var f = s / steps;
+          px(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, 1, 1, (s >> 1) % 2 ? C.chainLo : C.chain);
+        }
       }
 
       var PIN_ROWS = [3, 5, 7, 7, 7, 5, 5, 5, 5, 7, 9, 9, 11, 11, 13, 13, 13, 13, 13, 13, 13, 11, 11, 11, 9];
@@ -910,32 +980,55 @@ h2{
       });
 
       function drawPin(p) {
-        var x = Math.round(p.x), y = Math.round(sy(p.y));
+        var x = Math.round(sx(p.x)), y = Math.round(sy(p.y));
+        var im = ART_('skittles/pin.png');
         if (p.up) {
-          px(x - 6, y, 13, 2, C.shadow);
-          // 13x25: head, red band at the neck, belly, foot
-          stack(x, y, PIN_ROWS, PIN_COLS);
-        } else {
-          // lying in the direction it was knocked
-          var horiz = Math.abs(Math.cos(p.ang)) > 0.5;
+          px(x - 5, y - 1, 11, 2, C.shadow);
+          if (im) ctx.drawImage(im, x - (im.width >> 1), y - im.height);
+          else stack(x, y, PIN_ROWS, PIN_COLS);
+          return;
+        }
+        // lying in the direction it was knocked, head first
+        var horiz = Math.abs(Math.cos(p.ang)) > 0.5;
+        if (im) {
+          var g = ctx;
+          g.save();
           if (horiz) {
-            var dir = Math.cos(p.ang) > 0 ? 1 : -1;
-            px(x - 10, y - 4, 21, 9, C.down);
-            px(x - 10, y + 3, 21, 2, C.downLo);
-            px(x + dir * 6 - 2, y - 4, 5, 9, C.downLo);
-            px(x - dir * 1 - 1, y - 4, 3, 9, C.band);
+            // a quarter turn is pixel-exact
+            px(x - 12, y, 24, 2, C.shadow);
+            g.translate(x, y - 5);
+            g.rotate(Math.cos(p.ang) > 0 ? Math.PI / 2 : -Math.PI / 2);
+            g.drawImage(im, -(im.width >> 1), -(im.height >> 1));
           } else {
-            px(x - 4, y - 10, 9, 17, C.down);
-            px(x + 3, y - 10, 2, 17, C.downLo);
-            px(x - 4, y + (Math.sin(p.ang) > 0 ? 2 : -10), 9, 5, C.downLo);
-            px(x - 4, y - 3, 9, 3, C.band);
+            // falling towards you or away: foreshortened, head nearer or further
+            var h = 14, away = Math.sin(p.ang) < 0;
+            px(x - 5, y, 11, 2, C.shadow);
+            g.translate(x, y - (h >> 1));
+            if (!away) g.scale(1, -1);
+            g.drawImage(im, -(im.width >> 1), -(h >> 1), im.width, h);
           }
+          g.restore();
+          return;
+        }
+        if (horiz) {
+          var dir = Math.cos(p.ang) > 0 ? 1 : -1;
+          px(x - 10, y - 4, 21, 9, C.down);
+          px(x - 10, y + 3, 21, 2, C.downLo);
+          px(x + dir * 6 - 2, y - 4, 5, 9, C.downLo);
+          px(x - dir * 1 - 1, y - 4, 3, 9, C.band);
+        } else {
+          px(x - 4, y - 10, 9, 17, C.down);
+          px(x + 3, y - 10, 2, 17, C.downLo);
+          px(x - 4, y + (Math.sin(p.ang) > 0 ? 2 : -10), 9, 5, C.downLo);
+          px(x - 4, y - 3, 9, 3, C.band);
         }
       }
 
       function drawPole() {
-        var x = Math.round(POLE.x), y = Math.round(sy(POLE.y));
-        px(x - 6, y, 13, 3, C.shadow);
+        var x = Math.round(sx(POLE.x)), y = Math.round(sy(POLE.y));
+        px(x - 6, y - 1, 13, 3, C.shadow);
+        var im = ART_('skittles/post.png');
+        if (im) { ctx.drawImage(im, x - (im.width >> 1), y - im.height); return; }
         // 9x50: finial, shaft, foot
         var rows = fillCols(50, function (i) { return i < 2 ? 5 : (i < 4 ? 9 : (i < 42 ? 5 : (i < 45 ? 7 : 9))); });
         stack(x, y, rows, fillCols(50, function (i) { return i >= 42 ? C.brassLo : (i % 4 === 3 ? C.brassLo : C.brass); }));
@@ -945,8 +1038,10 @@ h2{
       var BALL_COLS = fillCols(15, function (i) { return i < 3 ? C.ballHi : C.ball; });
 
       function drawBall() {
-        var x = Math.round(ball.x), y = Math.round(sy(ball.y));
-        px(x - 6, y, 13, 3, C.shadow);
+        var x = Math.round(sx(ball.x)), y = Math.round(sy(ball.y));
+        px(x - 6, y - 1, 13, 3, C.shadow);
+        var im = ART_('skittles/ball.png');
+        if (im) { ctx.drawImage(im, x - (im.width >> 1), y - im.height - 1); return; }
         // 15x15
         stack(x, y - 3, BALL_ROWS, BALL_COLS);
         // a glint that rolls with it
@@ -1283,7 +1378,12 @@ h2{
 
       /* ---- render ---------------------------------------------- */
       function render(g) {
-        px(0, 0, W, H, C.floor);
+        // the room, then the bar top the board and the chalk boards sit on
+        api.backdrop(0.3);
+        px(90, 0, 300, H, 'rgba(0,0,0,.45)');
+        px(96, 0, 288, H, C.floor);
+        px(96, 0, 1, H, C.woodLo);
+        px(383, 0, 1, H, C.woodLo);
 
         // board
         px(BX0 - 4, BY0 - 4, BX1 - BX0 + 8, BY1 - BY0 + 8, C.edge);
@@ -1305,7 +1405,7 @@ h2{
         }
 
         // the pint, again
-        pint(424, 250, C.glass, C.beer);
+        pint(370, 252, C.glass, C.beer);
 
         // aim guide
         if (stage === 'aim') {
