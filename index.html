@@ -223,7 +223,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and the first game on it. Everything you see is placeholder blocks — the point is to find out whether the swing feels good before any art gets made.</p>
+    <p class="tagline">The shell, and the first two games on it. Everything you see is placeholder blocks — the point is to find out whether the swing feels good before any art gets made.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -270,6 +270,7 @@ h2{
       <span class="spec">SKITTLE FALLEN <b>11&times;5</b></span>
       <span class="spec">POST <b>5&times;26</b></span>
       <span class="spec">PINT <b>5&times;9</b></span>
+      <span class="spec">COIN <b>9&times;9</b></span>
     </div>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
@@ -857,10 +858,295 @@ h2{
     }
   });
 
+  /* ================================================================
+     GAME MODULE — Shove Ha'penny
+     Nine beds between ten lines on a hardwood board. Five coins a
+     turn, three turns a hand. A coin scores only if it sits clean
+     inside a bed, touching neither line. Three chalks closes a bed.
+     ================================================================ */
+
+  register({
+    id: 'shove',
+    name: 'Shove Ha\'penny',
+    sub: 'Five coins, nine beds',
+    blurb: 'Shove a coin up a chalked board and leave it sitting clean inside a bed. Three in every bed wins it.',
+    rival: 'Edna',
+    target: 9,
+    available: true,
+
+    create: function (api) {
+      // --- the board, top-down, no squash: it is flat and you look straight down it ---
+      var BX0 = 84, BX1 = 156;            // playing surface, side edges (coins over these fall off)
+      var BY0 = 4, BY1 = 156;             // far end and near edge
+      var LINE0 = 14, PITCH = 13, BEDS = 9; // ten lines, 14..131; bed k sits between line k and k+1
+      var COIN_R = 4.5;                   // a 9px coin in a 12px bed: 1.5px either way
+      var LAUNCH = { x: 120, y: 146 };    // the coin overhangs the near edge, under your palm
+      var MU = 115;                       // sliding friction, px/s^2
+      var REST = 0.86;                    // coin on coin
+      var TURNS = 3, COINS = 5;
+      var SPREAD = 0.2;                   // aim sweeps +/- this many radians off straight
+
+      var C = {
+        floor: '#1b1109',
+        wood: '#7d5029', woodHi: '#8d5e33', woodLo: '#5c3a1e', edge: '#35200f',
+        line: '#d9a63c', lineLo: '#8d6417',
+        chalkBoard: '#2b2622', chalk: '#ece6da', chalkDim: '#5b544c',
+        coin: '#c98a28', coinHi: '#ecc06a', coinLo: '#8d5a16',
+        good: '#9fd16a', dead: '#6f6350',
+        shadow: 'rgba(0,0,0,.34)',
+        glass: '#c9b27a', beer: '#c98a28',
+        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a', cream: '#f3e6cf'
+      };
+
+      var coins, cur, stage, t, aim, power, turn, thrown, chalk, score, done, turnPts, wasted, tallyT;
+
+      function lineY(i) { return LINE0 + i * PITCH; }
+      var LAST_LINE = lineY(BEDS);
+
+      function tri(time, period) {
+        var u = (time % period) / period;
+        return u < 0.5 ? u * 2 : 2 - u * 2;
+      }
+
+      function init() {
+        chalk = [0, 0, 0, 0, 0, 0, 0, 0, 0];   // index 0 = far bed (bed 9), 8 = near bed (bed 1)
+        score = 0; turn = 1; done = false;
+        newTurn();
+      }
+
+      function newTurn() {
+        coins = []; thrown = 0; turnPts = 0; wasted = 0;
+        newCoin();
+      }
+
+      function newCoin() {
+        stage = 'aim'; t = 0; aim = 0; power = 0;
+        cur = { x: LAUNCH.x, y: LAUNCH.y, vx: 0, vy: 0, on: true, mark: null };
+      }
+
+      function liveAim() { return SPREAD * (2 * tri(t, 1.7) - 1); }
+
+      function press() {
+        if (stage === 'aim') {
+          aim = liveAim(); stage = 'power'; t = 0;
+        } else if (stage === 'power') {
+          power = tri(t, 1.0);
+          var speed = 80 + power * 150;
+          cur.vx = Math.sin(aim) * speed;
+          cur.vy = -Math.cos(aim) * speed;
+          coins.push(cur);
+          thrown++;
+          stage = 'slide'; t = 0;
+        }
+      }
+
+      function moving() {
+        for (var i = 0; i < coins.length; i++) if (coins[i].vx || coins[i].vy) return true;
+        return false;
+      }
+
+      function update(dt) {
+        t += dt;
+
+        if (stage === 'tally') {
+          tallyT -= dt;
+          if (tallyT <= 0) endTurn();
+          return;
+        }
+        if (stage !== 'slide') return;
+
+        var i, j, c;
+        for (i = 0; i < coins.length; i++) {
+          c = coins[i];
+          if (!c.vx && !c.vy) continue;
+          c.x += c.vx * dt; c.y += c.vy * dt;
+          var s = Math.hypot(c.vx, c.vy);
+          var ns = s - MU * dt;
+          if (ns < 2) { c.vx = 0; c.vy = 0; }
+          else { c.vx *= ns / s; c.vy *= ns / s; }
+        }
+
+        // coin on coin: equal masses, mostly elastic
+        for (i = 0; i < coins.length; i++) {
+          for (j = i + 1; j < coins.length; j++) {
+            var a = coins[i], b = coins[j];
+            var dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+            if (d >= COIN_R * 2 || d < 0.0001) continue;
+            var nx = dx / d, ny = dy / d;
+            var over = COIN_R * 2 - d;
+            a.x -= nx * over / 2; a.y -= ny * over / 2;
+            b.x += nx * over / 2; b.y += ny * over / 2;
+            var vr = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+            if (vr < 0) {
+              var imp = -(1 + REST) * vr / 2;
+              a.vx -= nx * imp; a.vy -= ny * imp;
+              b.vx += nx * imp; b.vy += ny * imp;
+            }
+          }
+        }
+
+        // off the sides or over the far end: gone
+        for (i = coins.length - 1; i >= 0; i--) {
+          c = coins[i];
+          if (c.x < BX0 || c.x > BX1 || c.y < BY0) coins.splice(i, 1);
+        }
+
+        if (!moving() && t > 0.15) {
+          // anything that never cleared the near line comes back off the board
+          for (i = coins.length - 1; i >= 0; i--) if (coins[i].y - COIN_R > LAST_LINE) coins.splice(i, 1);
+          if (thrown < COINS) newCoin();
+          else tally();
+        }
+      }
+
+      function bedOf(c) {
+        for (var k = 0; k < BEDS; k++) {
+          var top = lineY(k) + 0.5, bot = lineY(k + 1) - 0.5;
+          if (c.y - COIN_R >= top && c.y + COIN_R <= bot) return k;
+        }
+        return -1;
+      }
+
+      function tally() {
+        stage = 'tally'; tallyT = 1.4; turnPts = 0; wasted = 0;
+        for (var i = 0; i < coins.length; i++) {
+          var k = bedOf(coins[i]);
+          if (k < 0) { coins[i].mark = 'dead'; continue; }
+          if (chalk[k] < 3) { chalk[k]++; score++; turnPts++; coins[i].mark = 'good'; }
+          else { wasted++; coins[i].mark = 'dead'; }
+        }
+      }
+
+      function closed() {
+        var n = 0;
+        for (var k = 0; k < BEDS; k++) if (chalk[k] >= 3) n++;
+        return n;
+      }
+
+      function endTurn() {
+        if (turn >= TURNS || closed() === BEDS) { done = true; stage = 'over'; return; }
+        turn++;
+        newTurn();
+      }
+
+      /* ---- render ---------------------------------------------- */
+      function render(g) {
+        px(0, 0, W, H, C.floor);
+
+        // board
+        px(BX0 - 2, BY0 - 2, BX1 - BX0 + 4, BY1 - BY0 + 4, C.edge);
+        px(BX0, BY0, BX1 - BX0, BY1 - BY0, C.wood);
+        px(BX0, BY0, BX1 - BX0, 1, C.woodHi);
+        px(BX0, BY0, 1, BY1 - BY0, C.woodLo);
+        px(BX1 - 1, BY0, 1, BY1 - BY0, C.woodLo);
+        // grain
+        for (var gy = BY0 + 5; gy < BY1; gy += 9) px(BX0 + 3 + (gy * 7) % 11, gy, 18, 1, C.woodLo);
+
+        // lines
+        for (var i = 0; i <= BEDS; i++) px(BX0, lineY(i), BX1 - BX0, 1, C.line);
+
+        // chalk boards either side: yours on the right, the bed number on the left
+        for (var k = 0; k < BEDS; k++) {
+          var cy = lineY(k) + 2;
+          px(BX1 + 5, cy, 17, PITCH - 3, C.chalkBoard);
+          for (var m = 0; m < 3; m++) px(BX1 + 8 + m * 4, cy + 2, 1, PITCH - 7, m < chalk[k] ? C.chalk : C.chalkDim);
+          if (chalk[k] >= 3) px(BX1 + 6, cy + (PITCH - 3) / 2 - 1, 15, 1, C.chalk);
+          // bed number as pips, 1 nearest you
+          var n = BEDS - k;
+          for (var p = 0; p < n; p++) px(BX0 - 7 - (p % 3) * 2, cy + 1 + Math.floor(p / 3) * 3, 1, 1, C.lineLo);
+        }
+
+        // the pint, again
+        stack(212, 150, [5, 5, 5, 5, 5, 5, 5, 5, 5],
+          [C.glass, C.glass, C.beer, C.beer, C.beer, C.beer, C.beer, C.beer, C.glass]);
+
+        // aim guide
+        if (stage === 'aim') {
+          var a = liveAim();
+          for (var r = 12; r <= 42; r += 10) px(LAUNCH.x + Math.sin(a) * r - 1, LAUNCH.y - Math.cos(a) * r - 1, 2, 2, C.line);
+          px(LAUNCH.x + Math.sin(a) * 50 - 1, LAUNCH.y - Math.cos(a) * 50 - 1, 3, 3, C.meterHi);
+        }
+
+        for (var c = 0; c < coins.length; c++) drawCoin(coins[c]);
+        if (stage === 'aim' || stage === 'power') drawCoin(cur);
+
+        if (stage === 'power') drawMeter();
+      }
+
+      function drawCoin(c) {
+        var x = Math.round(c.x), y = Math.round(c.y);
+        var body = C.coin, hi = C.coinHi;
+        if (c.mark === 'good') { body = C.good; hi = C.cream; }
+        else if (c.mark === 'dead') { body = C.dead; hi = C.dead; }
+        px(x - 3, y + 4, 8, 1, C.shadow);
+        // 9x9 disc, base at y+5 so it is centred on the coin
+        stack(x, y + 5, [3, 7, 7, 9, 9, 9, 7, 7, 3],
+          [hi, hi, body, body, body, body, body, C.coinLo, C.coinLo]);
+      }
+
+      function drawMeter() {
+        var x = 5, y0 = 30, h = 100;
+        px(x - 1, y0 - 1, 9, h + 2, C.meter);
+        var p = tri(t, 1.0);
+        var fill = Math.round(h * p);
+        for (var i = 0; i < fill; i++) {
+          var f = i / h;
+          px(x, y0 + h - i - 1, 7, 1, f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi));
+        }
+        px(x, y0 + h - fill - 1, 7, 1, C.cream);
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        return '<span>TURN <b>' + turn + '</b>/' + TURNS + '</span>' +
+               '<span>COIN <b>' + Math.min(thrown + (stage === 'slide' || stage === 'tally' ? 0 : 1), COINS) + '</b>/' + COINS + '</span>' +
+               '<span>CHALK <b>' + score + '</b></span>' +
+               '<span>BEDS <b>' + closed() + '</b>/9</span>' +
+               '<span class="rival">EDNA <b>9</b></span>';
+      }
+
+      function prompt() {
+        if (stage === 'aim') return 'Line it up.<br><span>It goes where it points and stops where the board decides</span>';
+        if (stage === 'power') return 'Now the shove.<br><span>Sit inside a bed, not on a line</span>';
+        if (stage === 'slide') return '&nbsp;<br><span>Easy...</span>';
+        if (stage === 'tally') {
+          var s = turnPts === 0 ? 'Nothing chalked that turn.' : (turnPts === 1 ? 'One for the chalk.' : turnPts + ' for the chalk.');
+          return s + '<br><span>' + (wasted ? 'And ' + wasted + ' wasted on a closed bed or a line' : 'Coins off, next turn') + '</span>';
+        }
+        return '&nbsp;';
+      }
+
+      function action() {
+        if (stage === 'aim') return 'Set line';
+        if (stage === 'power') return 'Shove';
+        return '...';
+      }
+
+      function settled() { return done; }
+
+      function result() {
+        var v;
+        if (closed() === BEDS) v = 'Every bed closed. <b>Edna rubs out the board and buys you a half.</b>';
+        else if (score > 9) v = 'You have beaten Edna. <b>She says the board has gone slow.</b>';
+        else if (score === 9) v = 'Level with Edna. <b>She chalks it up as hers anyway.</b>';
+        else if (score >= 6) v = 'Not bad. <b>Edna says you have a soft palm.</b>';
+        else v = 'Edna watches the coins go off the end <b>and says nothing, kindly.</b>';
+        return {
+          score: score,
+          title: score > 9 ? 'You take the board' : (score === 9 ? 'A draw' : 'Edna takes the board'),
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
+  });
+
   /* ---- the rest of the room, waiting on their modules ---- */
   [
-    { id: 'shove', name: 'Shove Ha\'penny', sub: 'Five coins, nine beds',
-      blurb: 'Shove a coin up a chalked board and leave it sitting clean inside a bed. Three in every bed wins it.' },
     { id: 'ring', name: 'Ring the Bull', sub: 'One ring, one hook',
       blurb: 'A brass ring on a string, a hook on the wall, and the whole game in the moment you let go.' },
     { id: 'toad', name: 'Toad in the Hole', sub: 'Brass discs, lead top',
