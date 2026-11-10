@@ -1,0 +1,893 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Last Orders</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Inter:wght@400;500;600&family=Press+Start+2P&display=swap">
+
+<style>
+/* Layout: a single centred column — pub sign, playfield, then the room beneath it.
+   Single committed theme: a lit snug at closing time. */
+:root{
+  --ink:        #15100b;   /* page ground, warm near-black */
+  --panel:      #221a13;   /* raised surfaces */
+  --panel-hi:   #2e231a;
+  --rule:       #3b2d20;
+  --cream:      #f3e6cf;   /* primary text */
+  --muted:      #a28a6c;   /* secondary text */
+  --brass:      #e0a93f;   /* accent — lamp brass */
+  --ember:      #c4502a;   /* alerts, the red pin band */
+  --ok:         #7fa05a;
+
+  --display: 'Abril Fatface', Georgia, 'Times New Roman', serif;
+  --pixel:   'Press Start 2P', 'Courier New', monospace;
+  --body:    'Inter', system-ui, -apple-system, sans-serif;
+
+  color-scheme: dark;
+}
+
+*{ box-sizing: border-box; }
+
+body{
+  margin:0;
+  background: var(--ink);
+  color: var(--cream);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.wrap{
+  max-width: 780px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+/* ---- Pub sign ---------------------------------------------------- */
+header{ text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center; }
+.sign{
+  border: 2px solid var(--brass);
+  border-radius: 2px;
+  padding: 14px 26px 16px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  box-shadow: 0 0 0 4px var(--ink), 0 10px 24px rgba(0,0,0,.5);
+  max-width: 100%;
+}
+.sign h1{
+  font-family: var(--display);
+  font-size: clamp(30px, 8vw, 46px);
+  line-height: 1;
+  margin: 0;
+  color: var(--brass);
+  letter-spacing: .01em;
+  text-wrap: balance;
+}
+.sign .est{
+  font-family: var(--pixel);
+  font-size: 8px;
+  letter-spacing: .18em;
+  color: var(--muted);
+  margin-top: 9px;
+}
+.tagline{ color: var(--muted); font-size: 14px; max-width: 52ch; margin:0; text-wrap: balance; }
+
+/* ---- Playfield --------------------------------------------------- */
+#table{ display:none; flex-direction:column; gap:10px; }
+#table.on{ display:flex; }
+
+.hud{
+  display:flex; gap:14px; flex-wrap:wrap;
+  justify-content:center; align-items:baseline;
+  font-family: var(--pixel); font-size: 9px; line-height:1.4;
+  color: var(--muted);
+}
+.hud b{ color: var(--cream); font-weight:400; font-variant-numeric: tabular-nums; }
+.hud .rival{ color: var(--brass); }
+
+#stage{
+  display:flex; justify-content:center;
+  background: #0d0906;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 10px;
+  overflow: hidden;
+}
+canvas{
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display:block;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.prompt{
+  min-height: 2.6em;
+  text-align:center;
+  font-family: var(--pixel);
+  font-size: 9px; line-height:1.7;
+  color: var(--brass);
+}
+.prompt span{ color: var(--muted); }
+
+.row{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+
+button{
+  font-family: var(--pixel); font-size: 9px;
+  background: var(--panel-hi);
+  color: var(--cream);
+  border: 1px solid var(--rule);
+  border-bottom-width: 3px;
+  border-radius: 2px;
+  padding: 11px 16px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+button:hover{ background: #3a2c20; border-color: var(--brass); }
+button:focus-visible{ outline: 2px solid var(--brass); outline-offset: 2px; }
+button:active{ transform: translateY(1px); border-bottom-width: 2px; }
+button.primary{ background: var(--brass); color: #1b1309; border-color:#8d6417; }
+button.primary:hover{ background:#eeb94c; }
+
+/* ---- The games room --------------------------------------------- */
+#room{ display:flex; flex-direction:column; gap:14px; }
+#room.off{ display:none; }
+
+h2{
+  font-family: var(--pixel); font-size: 11px; letter-spacing:.1em;
+  color: var(--muted); margin:0; font-weight:400;
+}
+
+.games{ display:grid; gap:10px; grid-template-columns: repeat(auto-fill, minmax(230px,1fr)); }
+
+.game{
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 14px;
+  display:flex; flex-direction:column; gap:7px;
+  min-width: 0;
+}
+.game h3{
+  font-family: var(--display); font-size: 21px; margin:0; line-height:1.1;
+  color: var(--cream);
+}
+.game .sub{
+  font-family: var(--pixel); font-size: 7px; letter-spacing:.1em;
+  color: var(--brass); text-transform: uppercase;
+}
+.game p{ margin:0; font-size: 13.5px; color: var(--muted); }
+.game footer{ margin-top: 4px; }
+.game.locked{ opacity: .62; }
+.game.locked h3{ color: var(--muted); }
+.game.locked .sub{ color: var(--rule); }
+.tag{
+  font-family: var(--pixel); font-size: 7px; letter-spacing:.1em;
+  color: var(--muted); border:1px dashed var(--rule); padding:7px 9px;
+  display:inline-block; border-radius:2px;
+}
+
+/* ---- Scorecard --------------------------------------------------- */
+#card{ display:none; }
+#card.on{ display:block; }
+.card-inner{
+  background: var(--panel);
+  border:1px solid var(--rule);
+  border-left: 3px solid var(--brass);
+  border-radius: 3px;
+  padding: 18px;
+  display:flex; flex-direction:column; gap:12px;
+}
+.card-inner h3{ font-family: var(--display); font-size: 25px; margin:0; line-height:1.15; }
+.tally{ display:flex; gap:22px; flex-wrap:wrap; }
+.tally div{ display:flex; flex-direction:column; gap:3px; }
+.tally dt{ font-family: var(--pixel); font-size:7px; letter-spacing:.1em; color:var(--muted); }
+.tally dd{ margin:0; font-family: var(--pixel); font-size:18px; color:var(--cream); font-variant-numeric: tabular-nums; }
+.verdict{ margin:0; font-size:14px; color: var(--muted); }
+.verdict b{ color: var(--cream); font-weight:600; }
+
+/* ---- Build notes ------------------------------------------------- */
+.notes{
+  border-top: 1px solid var(--rule);
+  padding-top: 18px;
+  display:flex; flex-direction:column; gap:10px;
+}
+.notes p{ margin:0; font-size: 13.5px; color: var(--muted); max-width: 64ch; }
+.notes code{
+  font-family: var(--pixel); font-size: 9px; color: var(--brass);
+  background: var(--panel); padding: 2px 5px; border-radius:2px;
+  white-space: nowrap;
+}
+.specs{ display:flex; gap:7px; flex-wrap:wrap; }
+.spec{
+  font-family: var(--pixel); font-size: 7.5px; letter-spacing:.06em;
+  background: var(--panel); border:1px solid var(--rule);
+  padding: 7px 9px; border-radius:2px; color: var(--muted);
+}
+.spec b{ color: var(--cream); font-weight:400; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition: none !important; animation: none !important; }
+  button:active{ transform:none; }
+}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="sign">
+      <h1>Last Orders</h1>
+      <div class="est">PUB GAMES &middot; PROTOTYPE</div>
+    </div>
+    <p class="tagline">The shell, and the first game on it. Everything you see is placeholder blocks — the point is to find out whether the swing feels good before any art gets made.</p>
+  </header>
+
+  <!-- ===== Playfield ===== -->
+  <div id="table">
+    <div class="hud" id="hud"></div>
+    <div id="stage"><canvas id="screen" width="240" height="160" aria-label="Bar skittles playfield"></canvas></div>
+    <div class="prompt" id="prompt"></div>
+    <div class="row">
+      <button id="btn-act" class="primary" type="button">Throw</button>
+      <button id="btn-quit" type="button">Back to the room</button>
+    </div>
+  </div>
+
+  <!-- ===== Scorecard ===== -->
+  <div id="card">
+    <div class="card-inner">
+      <h3 id="card-title">Hand finished</h3>
+      <div class="tally">
+        <div><dt>YOUR SCORE</dt><dd id="card-you">0</dd></div>
+        <div><dt id="card-rival-label">REG</dt><dd id="card-rival">0</dd></div>
+        <div><dt>BEST TONIGHT</dt><dd id="card-best">0</dd></div>
+      </div>
+      <p class="verdict" id="card-verdict"></p>
+      <div class="row" style="justify-content:flex-start">
+        <button id="btn-again" class="primary" type="button">Another hand</button>
+        <button id="btn-room" type="button">Back to the room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== The games room ===== -->
+  <div id="room">
+    <h2>THE GAMES ROOM</h2>
+    <div class="games" id="games"></div>
+  </div>
+
+  <div class="notes">
+    <h2>BUILD NOTES</h2>
+    <p>Every game is a module that honours one contract — <code>init</code>, <code>update</code>, <code>render</code>, <code>press</code>, <code>settled</code>, <code>result</code> — so the shell never knows what it is running. Adding the next one is a new file, not a new engine.</p>
+    <p>The playfield renders at 240&times;160 and scales up with nearest-neighbour, so these placeholder blocks are already the exact pixel dimensions the sprites need to be:</p>
+    <div class="specs">
+      <span class="spec">BALL <b>7&times;7</b></span>
+      <span class="spec">SKITTLE <b>7&times;13</b></span>
+      <span class="spec">SKITTLE FALLEN <b>11&times;5</b></span>
+      <span class="spec">POST <b>5&times;26</b></span>
+      <span class="spec">PINT <b>5&times;9</b></span>
+    </div>
+    <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
+    <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================================================================
+     SHELL
+     Owns the canvas, the clock, the screens and the registry.
+     Knows nothing about any individual game.
+     ================================================================ */
+
+  var W = 240, H = 160;
+  var canvas = document.getElementById('screen');
+  var ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  var GAMES = [];
+  function register(def) { GAMES.push(def); }
+
+  var state = {
+    screen: 'room',     // room | play | card
+    game: null,         // live module instance
+    def: null,          // its definition
+    best: {}            // best score per game id, this session
+  };
+
+  /* ---- pixel-perfect-ish scaling ---- */
+  function fit() {
+    var stage = document.getElementById('stage');
+    var availW = stage.clientWidth - 20;
+    var availH = Math.min(window.innerHeight * 0.58, 440);
+    var s = Math.min(availW / W, availH / H);
+    s = Math.max(1, Math.floor(s * 2) / 2);
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+
+  /* ---- clock: fixed 120Hz steps, rendered once per frame ---- */
+  var last = 0, acc = 0, STEP = 1 / 120;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!last) last = now;
+    var dt = Math.min((now - last) / 1000, 0.25);
+    last = now;
+    if (state.screen !== 'play' || !state.game) return;
+
+    acc += dt;
+    var guard = 0;
+    while (acc >= STEP && guard++ < 40) { state.game.update(STEP); acc -= STEP; }
+
+    state.game.render(ctx);
+    paintHud();
+
+    if (state.game.settled()) {
+      var res = state.game.result();
+      state.game = null;
+      showCard(res);
+    }
+  }
+  requestAnimationFrame(frame);
+
+  /* ---- HUD + prompt, written into the DOM so the type stays sharp ---- */
+  var hudEl = document.getElementById('hud');
+  var promptEl = document.getElementById('prompt');
+  var actBtn = document.getElementById('btn-act');
+  var lastHud = '', lastPrompt = '', lastAct = '';
+
+  function paintHud() {
+    var h = state.game.hud();
+    if (h !== lastHud) { hudEl.innerHTML = h; lastHud = h; }
+    var p = state.game.prompt();
+    if (p !== lastPrompt) { promptEl.innerHTML = p; lastPrompt = p; }
+    var a = state.game.action();
+    if (a !== lastAct) { actBtn.textContent = a; lastAct = a; }
+  }
+
+  /* ---- input: one button, pressed however you like ---- */
+  function press() {
+    if (state.screen === 'play' && state.game) state.game.press();
+  }
+  canvas.addEventListener('pointerdown', function (e) { e.preventDefault(); press(); });
+  actBtn.addEventListener('click', press);
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      if (state.screen === 'play') { e.preventDefault(); press(); }
+    }
+  });
+
+  /* ---- screens ---- */
+  function show(which) {
+    state.screen = which;
+    document.getElementById('table').classList.toggle('on', which === 'play');
+    document.getElementById('room').classList.toggle('off', which !== 'room');
+    document.getElementById('card').classList.toggle('on', which === 'card');
+    if (which === 'play') fit();
+  }
+
+  function play(def) {
+    state.def = def;
+    state.game = def.create({ W: W, H: H });
+    state.game.init();
+    lastHud = lastPrompt = lastAct = '';
+    acc = 0; last = 0;
+    show('play');
+  }
+
+  function showCard(res) {
+    var id = state.def.id;
+    state.best[id] = Math.max(state.best[id] || 0, res.score);
+
+    document.getElementById('card-title').textContent = res.title;
+    document.getElementById('card-you').textContent = res.score;
+    document.getElementById('card-rival-label').textContent = state.def.rival.toUpperCase();
+    document.getElementById('card-rival').textContent = state.def.target;
+    document.getElementById('card-best').textContent = state.best[id];
+    document.getElementById('card-verdict').innerHTML = res.verdict;
+    show('card');
+  }
+
+  document.getElementById('btn-quit').addEventListener('click', function () { state.game = null; show('room'); });
+  document.getElementById('btn-room').addEventListener('click', function () { show('room'); });
+  document.getElementById('btn-again').addEventListener('click', function () { play(state.def); });
+
+  /* ---- the room ---- */
+  function paintRoom() {
+    var el = document.getElementById('games');
+    el.innerHTML = '';
+    GAMES.forEach(function (g) {
+      var card = document.createElement('div');
+      card.className = 'game' + (g.available ? '' : ' locked');
+      var foot = g.available
+        ? '<button class="primary" type="button" data-play="' + g.id + '">Have a go</button>'
+        : '<span class="tag">NOT BUILT YET</span>';
+      card.innerHTML =
+        '<div class="sub">' + g.sub + '</div>' +
+        '<h3>' + g.name + '</h3>' +
+        '<p>' + g.blurb + '</p>' +
+        '<footer>' + foot + '</footer>';
+      el.appendChild(card);
+    });
+    el.querySelectorAll('[data-play]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var g = GAMES.filter(function (x) { return x.id === b.dataset.play; })[0];
+        if (g) play(g);
+      });
+    });
+  }
+
+  /* ================================================================
+     DRAW HELPERS — everything lands on whole pixels
+     ================================================================ */
+  function px(x, y, w, h, c) {
+    ctx.fillStyle = c;
+    ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+  }
+  // a sprite described as a column of row-widths, centred on x, base at y
+  function stack(x, y, rows, cols) {
+    for (var i = 0; i < rows.length; i++) {
+      var w = rows[i];
+      if (!w) continue;
+      px(x - Math.floor(w / 2), y - rows.length + i, w, 1, cols[i]);
+    }
+  }
+
+  /* ================================================================
+     GAME MODULE — Bar Skittles (Devil Among the Tailors)
+     Nine pins in a diamond. A ball on a chain hung from a post.
+     Aim, then power. The chain goes taut at 85 and the ball
+     swings round the post into the pins.
+     ================================================================ */
+
+  register({
+    id: 'bar-skittles',
+    name: 'Bar Skittles',
+    sub: 'Devil Among the Tailors',
+    blurb: 'Nine pins, three balls, and a ball on a chain. Throw it wide and let the chain sweep it through the middle, or go straight at the front three and hope they topple.',
+    rival: 'Reg',
+    target: 17,
+    available: true,
+
+    create: function (api) {
+      // --- the table, in world coordinates (flat top-down) ---
+      var POLE = { x: 120, y: 118 };      // the post, stood in the middle of the box
+      var L0 = 96;                        // chain at full length
+      var HANG = { x: 120, y: 214 };      // you hold the ball out at full stretch
+      var WIND = 2.55;                    // chain taken up by the post, per radian
+      var L_MIN = 14;                     // wound right down onto the post
+      var POST_R = 4;                     // the post is solid — you go round it
+      var DIA = { x: 120, y: 46 };        // centre of the pin diamond
+      var SPACING = 12;
+      var PIN_R = 4, BALL_R = 4;
+      var TABLE = { x0: 8, y0: -30, x1: 232, y1: 196 };
+      var YS = 0.55, YO = 24;             // 3/4 squash
+      var TOPPLE_R = 18;                  // how far a falling pin reaches
+      var TOPPLE_DECAY = 0.38;            // force a falling pin passes on
+      var TOPPLE_MIN = 1.3;               // under this it falls, but takes nothing with it
+      var PIN_MIN_SPEED = 45;             // a ball slower than this won't fell a pin
+
+      // --- palette ---
+      var C = {
+        floor: '#241810', floorDark: '#1b1109',
+        wood: '#6b4322', woodHi: '#7d5029', woodLo: '#4a2d17', edge: '#35200f',
+        line: '#5a371c',
+        brass: '#d9a63c', brassLo: '#8d6417',
+        chain: '#7e6c49',
+        ball: '#211d19', ballHi: '#4a443c',
+        pin: '#ece0c4', pinLo: '#bba984', band: '#b33a2b',
+        down: '#9c8d6f', downLo: '#6f6350',
+        shadow: 'rgba(0,0,0,.34)',
+        glass: '#c9b27a', beer: '#c98a28',
+        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a'
+      };
+
+      // --- state ---
+      var pins, ball, pending, stage, t, aim, power, ballNo, score, thisBall, settleT, done;
+      var chain;                          // live chain length — shortens as it winds on
+
+      function sy(wy) { return YO + wy * YS; }
+
+      function layout() {
+        var out = [];
+        for (var i = -1; i <= 1; i++) {
+          for (var j = -1; j <= 1; j++) {
+            out.push({
+              x: DIA.x + (i - j) * SPACING,
+              y: DIA.y + (i + j) * SPACING,
+              up: true, ang: 0
+            });
+          }
+        }
+        return out;
+      }
+
+      function init() {
+        pins = layout();
+        pending = [];
+        ballNo = 1; score = 0; thisBall = 0; done = false;
+        newBall();
+      }
+
+      function newBall() {
+        stage = 'aim';
+        t = 0; aim = 0; power = 0; thisBall = 0; settleT = 0;
+        chain = L0;
+        ball = { x: HANG.x, y: HANG.y, vx: 0, vy: 0, live: false, taut: false, spin: 0, prevAng: null };
+      }
+
+      function tri(time, period) {
+        var u = (time % period) / period;
+        return u < 0.5 ? u * 2 : 2 - u * 2;
+      }
+
+      // aim sweeps across the throwable arc: up-left, over the top, to up-right
+      var AIM_A = -170 * Math.PI / 180, AIM_B = -10 * Math.PI / 180;
+
+      function press() {
+        if (stage === 'aim') {
+          aim = AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
+          stage = 'power'; t = 0;
+        } else if (stage === 'power') {
+          power = tri(t, 1.05);
+          throwBall();
+        }
+      }
+
+      function throwBall() {
+        var speed = 170 + power * 210;
+        ball.x = HANG.x;
+        ball.y = HANG.y;
+        ball.vx = Math.cos(aim) * speed;
+        ball.vy = Math.sin(aim) * speed;
+        ball.taut = true;
+        ball.prevAng = Math.atan2(HANG.y - POLE.y, HANG.x - POLE.x);
+        ball.live = true;
+        stage = 'throw';
+        t = 0;
+      }
+
+      function topple(pin, fromX, fromY, energy) {
+        pin.up = false;
+        pin.ang = Math.atan2(pin.y - fromY, pin.x - fromX);
+
+        // a pin passes on only a fraction of what felled it, so a cascade
+        // dies out after a step or two unless the ball arrived hard
+        var passed = energy * TOPPLE_DECAY;
+        if (passed < TOPPLE_MIN) return;
+
+        for (var i = 0; i < pins.length; i++) {
+          var p = pins[i];
+          if (!p.up) continue;
+          var dx = p.x - pin.x, dy = p.y - pin.y;
+          var d = Math.hypot(dx, dy);
+          if (d > TOPPLE_R || d === 0) continue;
+          var dot = (dx / d) * Math.cos(pin.ang) + (dy / d) * Math.sin(pin.ang);
+          if (dot < 0.35) continue;       // only what it actually falls towards
+          if (alreadyPending(p)) continue;
+          pending.push({ pin: p, t: 0.09, fx: pin.x, fy: pin.y, e: passed });
+        }
+      }
+
+      function alreadyPending(p) {
+        for (var i = 0; i < pending.length; i++) if (pending[i].pin === p) return true;
+        return false;
+      }
+
+      function update(dt) {
+        t += dt;
+
+        // queued chain reactions
+        for (var i = pending.length - 1; i >= 0; i--) {
+          pending[i].t -= dt;
+          if (pending[i].t <= 0) {
+            var q = pending.splice(i, 1)[0];
+            if (q.pin.up) topple(q.pin, q.fx, q.fy, q.e);
+          }
+        }
+
+        if (stage !== 'throw' || !ball.live) return;
+
+        // integrate
+        ball.x += ball.vx * dt;
+        ball.y += ball.vy * dt;
+        ball.spin += dt * 6;
+
+        // drag
+        var k = Math.exp(-0.26 * dt);
+        ball.vx *= k; ball.vy *= k;
+
+        // the post is solid. There is no throwing through it at the pins —
+        // the only way to them is round it.
+        var qx = ball.x - POLE.x, qy = ball.y - POLE.y;
+        var qd = Math.hypot(qx, qy);
+        if (qd < POST_R + BALL_R && qd > 0.001) {
+          var qnx = qx / qd, qny = qy / qd;
+          ball.x = POLE.x + qnx * (POST_R + BALL_R);
+          ball.y = POLE.y + qny * (POST_R + BALL_R);
+          var qvr = ball.vx * qnx + ball.vy * qny;
+          if (qvr < 0) { ball.vx -= qnx * qvr * 1.45; ball.vy -= qny * qvr * 1.45; }
+        }
+
+        // the chain: a hard maximum radius. Only the radial part of the
+        // ball's speed is lost, so a throw across the post keeps its
+        // sideways pace and swings; a throw straight at the pins does not.
+        var dx = ball.x - POLE.x, dy = ball.y - POLE.y;
+        var len = Math.hypot(dx, dy);
+        if (len > chain) {
+          var nx = dx / len, ny = dy / len;
+          ball.x = POLE.x + nx * chain;
+          ball.y = POLE.y + ny * chain;
+          var vr = ball.vx * nx + ball.vy * ny;
+          if (vr > 0) { ball.vx -= nx * vr * 1.02; ball.vy -= ny * vr * 1.02; }
+          ball.taut = true;
+        } else {
+          ball.taut = len > chain - 2;
+        }
+
+        // ...and as it goes round, the chain winds onto the post and the
+        // ball comes in. Each orbit sweeps a tighter ring through the pins.
+        if (ball.taut) {
+          var ang = Math.atan2(ball.y - POLE.y, ball.x - POLE.x);
+          if (ball.prevAng !== null) {
+            var da = ang - ball.prevAng;
+            while (da > Math.PI) da -= Math.PI * 2;
+            while (da < -Math.PI) da += Math.PI * 2;
+            var next = Math.max(L_MIN, chain - Math.abs(da) * WIND);
+            if (next < chain) {
+              var f = Math.pow(chain / next, 0.25);   // pulled in, so it quickens
+              ball.vx *= f; ball.vy *= f;
+              chain = next;
+            }
+          }
+          ball.prevAng = ang;
+        } else ball.prevAng = null;
+
+        // cushions on the far side and both ends (the near side is open — you
+        // stand there, and the ball swings out over the edge)
+        if (ball.x < TABLE.x0 + BALL_R) { ball.x = TABLE.x0 + BALL_R; ball.vx = Math.abs(ball.vx) * 0.6; }
+        if (ball.x > TABLE.x1 - BALL_R) { ball.x = TABLE.x1 - BALL_R; ball.vx = -Math.abs(ball.vx) * 0.6; }
+        if (ball.y < TABLE.y0 + BALL_R) { ball.y = TABLE.y0 + BALL_R; ball.vy = Math.abs(ball.vy) * 0.6; }
+
+        // pins
+        for (var p = 0; p < pins.length; p++) {
+          var pin = pins[p];
+          if (!pin.up) continue;
+          var px_ = pin.x - ball.x, py_ = pin.y - ball.y;
+          if (Math.hypot(px_, py_) < BALL_R + PIN_R) {
+            var sp0 = Math.hypot(ball.vx, ball.vy);
+            if (sp0 > PIN_MIN_SPEED) {
+              topple(pin, ball.x, ball.y, sp0 / 70);
+              ball.vx *= 0.82; ball.vy *= 0.82;   // every pin costs the ball
+            } else {
+              ball.vx *= 0.5; ball.vy *= 0.5;     // too slow — it just dies against it
+            }
+          }
+        }
+
+        // settle
+        var sp = Math.hypot(ball.vx, ball.vy);
+        if (sp < 14 || t > 13) {
+          settleT += dt;
+          if (settleT > 0.45 && pending.length === 0) finishBall();
+        } else settleT = 0;
+      }
+
+      function standing() {
+        var n = 0;
+        for (var i = 0; i < pins.length; i++) if (pins[i].up) n++;
+        return n;
+      }
+
+      function finishBall() {
+        var downNow = 9 - standing();
+        thisBall = downNow;
+        score += downNow;
+        ball.live = false;
+
+        if (ballNo >= 3) { done = true; stage = 'over'; return; }
+        ballNo++;
+        if (standing() === 0) pins = layout();   // all nine over: they go back up
+        newBall();
+      }
+
+      /* ---- render ---------------------------------------------- */
+      function render(g) {
+        // ground
+        px(0, 0, W, H, C.floorDark);
+        px(0, sy(TABLE.y1) - 2, W, H, C.floor);
+
+        // table top
+        var ty0 = sy(TABLE.y0), ty1 = sy(TABLE.y1);
+        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, ty1 - ty0, C.wood);
+        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, 2, C.woodHi);
+        px(TABLE.x0, ty1 - 3, TABLE.x1 - TABLE.x0, 3, C.woodLo);
+        px(TABLE.x0, ty1, TABLE.x1 - TABLE.x0, 2, C.edge);
+        px(TABLE.x0, ty0, 2, ty1 - ty0, C.woodLo);
+        px(TABLE.x1 - 2, ty0, 2, ty1 - ty0, C.woodLo);
+        // a worn ring where the pins always stand
+        for (var a = 0; a < 28; a++) {
+          var an = a / 28 * Math.PI * 2;
+          px(DIA.x + Math.cos(an) * 30, sy(DIA.y + Math.sin(an) * 30), 1, 1, C.line);
+        }
+
+        // the pint somebody left on the corner
+        stack(212, sy(162), [5, 5, 5, 5, 5, 5, 5, 5, 5],
+          [C.glass, C.glass, C.beer, C.beer, C.beer, C.beer, C.beer, C.beer, C.glass]);
+
+        // chain
+        if (stage === 'throw' || stage === 'aim' || stage === 'power') {
+          var bx = ball.x, by = ball.y;
+          var segs = Math.max(2, Math.round(Math.hypot(bx - POLE.x, by - POLE.y) / 4));
+          for (var s = 1; s < segs; s++) {
+            var f = s / segs;
+            px(POLE.x + (bx - POLE.x) * f, sy(POLE.y + (by - POLE.y) * f) - 9, 1, 1, C.chain);
+          }
+        }
+
+        // aim guide
+        if (stage === 'aim') {
+          var liveAim = AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
+          for (var r = 14; r <= 44; r += 10) {
+            px(HANG.x + Math.cos(liveAim) * r, sy(HANG.y + Math.sin(liveAim) * r), 2, 2, C.brass);
+          }
+          px(HANG.x + Math.cos(liveAim) * 52, sy(HANG.y + Math.sin(liveAim) * 52), 3, 3, C.ember);
+        }
+
+        // shadows, then bodies, back to front
+        var items = [];
+        for (var i = 0; i < pins.length; i++) items.push({ y: pins[i].y, kind: 'pin', ref: pins[i] });
+        items.push({ y: POLE.y, kind: 'pole' });
+        if (ball.live || stage === 'aim' || stage === 'power') items.push({ y: ball.y, kind: 'ball' });
+        items.sort(function (a, b) { return a.y - b.y; });
+
+        for (var n = 0; n < items.length; n++) {
+          var it = items[n];
+          if (it.kind === 'pin') drawPin(it.ref);
+          else if (it.kind === 'pole') drawPole();
+          else drawBall();
+        }
+
+        if (stage === 'power') drawMeter();
+      }
+
+      function drawPin(p) {
+        var x = Math.round(p.x), y = Math.round(sy(p.y));
+        if (p.up) {
+          px(x - 3, y, 7, 1, C.shadow);
+          stack(x, y, [3, 3, 3, 5, 5, 5, 7, 7, 7, 7, 7, 7, 5],
+            [C.pin, C.pin, C.pinLo, C.pin, C.band, C.band, C.pin, C.pin, C.pin, C.pinLo, C.pin, C.pin, C.pinLo]);
+        } else {
+          // lying in the direction it was knocked
+          var horiz = Math.abs(Math.cos(p.ang)) > 0.5;
+          if (horiz) {
+            var dir = Math.cos(p.ang) > 0 ? 1 : -1;
+            px(x - 5, y - 2, 11, 4, C.down);
+            px(x + dir * 3, y - 2, 2, 4, C.downLo);
+            px(x - dir * 1, y - 2, 2, 4, C.band);
+          } else {
+            px(x - 2, y - 5, 5, 9, C.down);
+            px(x - 2, y + (Math.sin(p.ang) > 0 ? 2 : -5), 5, 3, C.downLo);
+            px(x - 2, y - 1, 5, 2, C.band);
+          }
+        }
+      }
+
+      function drawPole() {
+        var x = Math.round(POLE.x), y = Math.round(sy(POLE.y));
+        px(x - 3, y, 7, 2, C.shadow);
+        stack(x, y, [3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5],
+          [C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo,
+           C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo,
+           C.brass, C.brass, C.brassLo, C.brass, C.brassLo, C.brassLo, C.brassLo, C.brassLo]);
+      }
+
+      function drawBall() {
+        var x = Math.round(ball.x), y = Math.round(sy(ball.y));
+        px(x - 3, y, 7, 2, C.shadow);
+        stack(x, y - 2, [3, 5, 7, 7, 7, 5, 3],
+          [C.ballHi, C.ball, C.ball, C.ball, C.ball, C.ball, C.ball]);
+        // a glint that rolls with it
+        px(x - 1 + Math.round(Math.cos(ball.spin)), y - 7 + Math.round(Math.sin(ball.spin)), 1, 1, C.ballHi);
+      }
+
+      function drawMeter() {
+        var x = 5, y0 = 30, h = 100;
+        px(x - 1, y0 - 1, 9, h + 2, C.meter);
+        var p = tri(t, 1.05);
+        var fill = Math.round(h * p);
+        for (var i = 0; i < fill; i++) {
+          var f = i / h;
+          var c = f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi);
+          px(x, y0 + h - i - 1, 7, 1, c);
+        }
+        px(x, y0 + h - fill - 1, 7, 1, C.cream || '#f3e6cf');
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        return '<span>BALL <b>' + Math.min(ballNo, 3) + '</b>/3</span>' +
+               '<span>SCORE <b>' + score + '</b></span>' +
+               '<span>STANDING <b>' + standing() + '</b></span>' +
+               '<span>CHAIN <b>' + Math.round(chain) + '</b></span>' +
+               '<span class="rival">REG <b>17</b></span>';
+      }
+
+      function prompt() {
+        if (stage === 'aim') return 'Send it round the post.<br><span>Sideways swings it. Straight at the post just bounces off</span>';
+        if (stage === 'power') return 'Now the weight of the swing.<br><span>More arm, more trips round before it dies</span>';
+        if (stage === 'throw') return '&nbsp;<br><span>Let it swing</span>';
+        return '&nbsp;';
+      }
+
+      function action() {
+        if (stage === 'aim') return 'Set line';
+        if (stage === 'power') return 'Throw';
+        return '...';
+      }
+
+      function settled() { return done; }
+
+      function result() {
+        var v;
+        if (score >= 24) v = 'Twenty-four or better. <b>Reg puts his pint down and asks who taught you.</b>';
+        else if (score > 17) v = 'You have beaten Reg. <b>He will want another go.</b>';
+        else if (score === 17) v = 'Level with Reg. <b>Nothing settled.</b>';
+        else if (score >= 12) v = 'Respectable. <b>Reg nods once and says nothing.</b>';
+        else v = 'Reg has seen worse, <b>but not this week.</b>';
+        return {
+          score: score,
+          title: score > 17 ? 'You take the hand' : (score === 17 ? 'A draw' : 'Reg takes the hand'),
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
+  });
+
+  /* ---- the rest of the room, waiting on their modules ---- */
+  [
+    { id: 'shove', name: 'Shove Ha\'penny', sub: 'Five coins, nine beds',
+      blurb: 'Shove a coin up a chalked board and leave it sitting clean inside a bed. Three in every bed wins it.' },
+    { id: 'ring', name: 'Ring the Bull', sub: 'One ring, one hook',
+      blurb: 'A brass ring on a string, a hook on the wall, and the whole game in the moment you let go.' },
+    { id: 'toad', name: 'Toad in the Hole', sub: 'Brass discs, lead top',
+      blurb: 'Lob four brass discs at a hole in a lead-topped table from eight feet. Sussex\'s own, and unforgiving.' },
+    { id: 'fruit', name: 'The Machine', sub: 'Nudge, hold, repent',
+      blurb: 'The cabinet in the corner that quietly takes whatever you won at the other tables.' },
+    { id: 'doms', name: 'Dominoes', sub: 'Fives and threes',
+      blurb: 'Play to a multiple of five or three and peg it. The old boy by the fire has not lost since 1987.' }
+  ].forEach(function (g) {
+    g.available = false; g.rival = '—'; g.target = 0;
+    register(g);
+  });
+
+  /* ---- boot ---- */
+  function start(saved) {
+    if (saved && saved.best) state.best = saved.best;
+    paintRoom();
+    show('room');
+    fit();
+  }
+  if (window.claude && window.claude.hot) {
+    window.claude.hot.snapshot(function () { return { best: state.best }; });
+    window.claude.hot.ready ? window.claude.hot.ready(start) : start(window.claude.hot.data || {});
+  } else {
+    start({});
+  }
+})();
+</script>
+
+</body></html>
