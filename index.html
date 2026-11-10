@@ -231,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and the first two games on it. Both games and the room are wearing their first real art.</p>
+    <p class="tagline">The shell, and the first three games on it: Bar Skittles, Shove Ha'penny and Ring the Bull, all in their first real art.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -279,9 +279,11 @@ h2{
       <span class="spec">PINT <b>11&times;17</b></span>
       <span class="spec">ROOM <b>480&times;270</b></span>
       <span class="spec">COIN <b>16&times;16</b></span>
+      <span class="spec">BULL WALL <b>480&times;270</b></span>
     </div>
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
+    <p>Ring the Bull is the one game in true 3D: a ring on a 1.6m string from the ceiling, swinging on a sphere, seen from behind your shoulder. The hook stands 6cm off the wall, so the ring has to reach it with the hole lined up, and arrive slowly enough to drop on rather than bang the wall and jump off. Held back and let go, a pendulum keeps to its line, so where you point it is where it meets the wall.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -317,7 +319,7 @@ h2{
   }
   ['room/backdrop.png', 'room/pint.png', 'skittles/pin.png', 'skittles/ball.png',
    'skittles/post.png', 'skittles/wood.png', 'shove/coin.png', 'shove/board.png',
-   'shove/slate.png'].forEach(art);
+   'shove/slate.png', 'ring/wall.png', 'ring/hook.png'].forEach(art);
 
   /* ---- the room behind every game: the shell's own layer, drawn
      first and knocked back so whatever is on the table reads first. */
@@ -1539,10 +1541,427 @@ h2{
     }
   });
 
+  /* ================================================================
+     GAME MODULE — Ring the Bull
+     A brass ring on a string from the ceiling, a hook under a bull's
+     head on the wall. Pick your line, then how hard you send it.
+     Too soft and it falls short; too hard and it bangs off the hook.
+     ================================================================ */
+
+  register({
+    id: 'ring',
+    name: 'Ring the Bull',
+    sub: 'One ring, one hook',
+    blurb: 'A brass ring on a string and a hook under the bull. Three swings a turn against Terry, first to 7 ringers. Gentle wins it.',
+    rival: 'Terry',
+    available: true,
+
+    create: function (api) {
+      // --- the world, in metres. x across the wall, y up, z towards it.
+      // The string hangs from a screw-eye in the ceiling at the origin.
+      var G = 9.81;
+      var LEN = 1.6;                      // string, ceiling to the middle of the ring
+      var WALL = 1.028;                   // the wall, this far out from under the screw-eye
+      var HOOK_OUT = 0.06;                // the hook stands this far off the wall
+      var RI = 0.032, RO = 0.044;         // the ring: inside and outside radius
+      var SHAFT = 0.005;                  // the hook's thickness
+      var HOOK_Z = WALL - HOOK_OUT;
+      var HOOK = { x: 0, y: -Math.sqrt(LEN * LEN - HOOK_Z * HOOK_Z), z: HOOK_Z };
+      var BACK = 35 * Math.PI / 180;      // how far back you hold it before you let go
+      var V_LO = 0.5, V_HI = 3.4;         // m/s: the send at an empty and a full meter
+      var V_CATCH = 1.7;                  // threaded faster than this, it bangs the wall and comes off
+      var LINE = 0.12;                    // the line sweeps +/- this many radians
+      var DRAG = 0.15;
+
+      // --- the camera: behind your shoulder, a little right, square to the wall,
+      // so the painted wall is a flat picture at the hook's depth.
+      var CAM = { x: 0.25, y: -1.2, z: -2.0 }, F = 575;
+      var HOOK_PX = { x: 238, y: 185 };   // where the hook is painted in ring/wall.png
+      var X0 = HOOK_PX.x + F * (CAM.x - HOOK.x) / (HOOK.z - CAM.z);
+      var Y0 = HOOK_PX.y - F * (CAM.y - HOOK.y) / (HOOK.z - CAM.z);
+      function proj(x, y, z) {
+        var d = z - CAM.z;
+        return { x: X0 + F * (x - CAM.x) / d, y: Y0 - F * (y - CAM.y) / d, s: F / d };
+      }
+
+      var C = {
+        brass: '#d9a63c', brassHi: '#f6d88a', brassLo: '#8d6417', brassDk: '#5b3f0e',
+        string: '#d8c8a0', stringLo: '#8f8064',
+        shadow: 'rgba(0,0,0,', ember: '#c4502a',
+        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a', cream: '#f3e6cf'
+      };
+
+      var GOAL = 7, SWINGS = 3;
+      // Terry hangs the ring more often than not. Errors are one standard deviation.
+      var AI = { name: 'Terry', aimErr: 0.028, powErr: 0.09, think: 1.0, swing: 0.7 };
+
+      var ring, stage, t, aim, power, swingNo, players, cur, round, done, note, plan, hangT, flash;
+
+      function tri(time, period) {
+        var u = (time % period) / period;
+        return u < 0.5 ? u * 2 : 2 - u * 2;
+      }
+
+      function init() {
+        players = [{ name: 'You', score: 0 }, { name: AI.name, score: 0 }];
+        cur = 0; round = 1; done = false; note = '';
+        startTurn();
+      }
+
+      function startTurn() { swingNo = 1; newSwing(); }
+
+      // held back at full stretch, on the line you are pointing it down
+      function held(a) {
+        var s0 = Math.sin(BACK), c0 = Math.cos(BACK);
+        return { x: -LEN * s0 * Math.sin(a), y: -LEN * c0, z: -LEN * s0 * Math.cos(a) };
+      }
+
+      function newSwing() {
+        stage = 'aim'; t = 0; aim = 0; power = 0; plan = null; hangT = 0; flash = 0;
+        var p = held(0);
+        ring = { x: p.x, y: p.y, z: p.z, vx: 0, vy: 0, vz: 0, armed: true, out: null, hung: null };
+      }
+
+      function liveAim() {
+        if (cur === 1 && plan && t > 0.5) return plan.aim;
+        return LINE * (2 * tri(t, 1.9) - 1);
+      }
+      function livePower() {
+        return (cur === 1 && plan) ? Math.min(plan.power, t / AI.swing) : tri(t, 1.0);
+      }
+
+      function press() {
+        if (cur !== 0) return;            // Terry's swing: hands off
+        if (stage === 'aim') { aim = liveAim(); stage = 'power'; t = 0; }
+        else if (stage === 'power') { power = livePower(); note = ''; send(); }
+      }
+
+      // let go: from where you hold it, along the line, at the weight you chose
+      function send() {
+        var p = held(aim), s0 = Math.sin(BACK), c0 = Math.cos(BACK);
+        var v = V_LO + power * (V_HI - V_LO);
+        ring.x = p.x; ring.y = p.y; ring.z = p.z;
+        ring.vx = c0 * Math.sin(aim) * v; ring.vy = -s0 * v; ring.vz = c0 * Math.cos(aim) * v;
+        ring.armed = true; ring.out = null; ring.hung = null;
+        stage = 'swing'; t = 0;
+      }
+
+      // One fixed step of the swing. Returns true once the ring has either
+      // stopped on the hook or come back to your hand. Terry runs this same
+      // function, on a copy, to try out swings before he lets go.
+      function physics(dt) {
+        t += dt;
+        if (ring.hung) {
+          // on the hook: it slides to the wall, drops and rocks to a stop
+          ring.hung.t += dt;
+          return ring.hung.t > 1.3;
+        }
+        var h = dt / 2;
+        for (var k = 0; k < 2; k++) {
+          ring.vy -= G * h;
+          var dr = Math.exp(-DRAG * h);
+          ring.vx *= dr; ring.vy *= dr; ring.vz *= dr;
+          var oz = ring.z;
+          ring.x += ring.vx * h; ring.y += ring.vy * h; ring.z += ring.vz * h;
+          // the string: a hard radius about the screw-eye
+          var r = Math.hypot(ring.x, ring.y, ring.z);
+          ring.x *= LEN / r; ring.y *= LEN / r; ring.z *= LEN / r;
+          var nx = ring.x / LEN, ny = ring.y / LEN, nz = ring.z / LEN;
+          var vr = ring.vx * nx + ring.vy * ny + ring.vz * nz;
+          ring.vx -= vr * nx; ring.vy -= vr * ny; ring.vz -= vr * nz;
+
+          // reaching the hook's tip: through the hole, or off the rim
+          if (ring.armed && oz < HOOK.z && ring.z >= HOOK.z) {
+            var d = Math.hypot(ring.x - HOOK.x, ring.y - HOOK.y);
+            var sp = Math.hypot(ring.vx, ring.vy, ring.vz);
+            if (d < RI - SHAFT) {
+              if (sp <= V_CATCH) {
+                ring.out = 'ring';
+                ring.hung = { t: 0, x0: ring.x, y0: ring.y, z0: ring.z, sw: (ring.x - HOOK.x) * 40 + ring.vx * 2 };
+                return false;
+              }
+              ring.out = 'bang';           // straight on, but it hits the wall and jumps back off
+              ring.vz = -0.4 * ring.vz; ring.vx *= 0.5; ring.armed = false;
+            } else if (d < RO + SHAFT) {
+              ring.out = 'clip';           // the rim catches the tip
+              ring.vz = -0.35 * ring.vz;
+              ring.vx += (ring.x - HOOK.x) / d * 0.4;
+              ring.armed = false;
+            }
+          }
+          // the wall
+          if (ring.z > WALL - 0.006) {
+            ring.z = WALL - 0.006;
+            if (ring.vz > 0) { ring.vz = -0.45 * ring.vz; if (!ring.out) ring.out = 'wall'; }
+            ring.armed = false;
+          }
+        }
+        if (!ring.out && ring.vz < 0 && t > 0.1) ring.out = 'short';
+        // back to your hand
+        if (ring.vz < 0 && ring.z < -0.55) return true;
+        return t > 5;
+      }
+
+      function update(dt) {
+        if (flash > 0) flash -= dt;
+        if (stage === 'swing') {
+          if (physics(dt)) finishSwing();
+          return;
+        }
+        t += dt;
+        if (cur === 1 && !done) aiTick();
+        // you hold it back on whatever line you are pointing down
+        if (stage === 'aim' || stage === 'power') {
+          var p = held(stage === 'aim' ? liveAim() : aim);
+          ring.x = p.x; ring.y = p.y; ring.z = p.z;
+        }
+      }
+
+      var SAY = {
+        ring: ['rings the bull', 'Ringed it'],
+        bang: ['hit it too hard: on and straight back off', 'Too hard: on and straight back off'],
+        clip: ['clipped the hook', 'Clipped the hook'],
+        wall: ['missed the hook', 'Wide of the hook'],
+        short: ['came up short', 'Short']
+      };
+
+      function finishSwing() {
+        var o = ring.out || 'short';
+        if (o === 'ring') { players[cur].score++; flash = 0.6; }
+        note = cur === 0 ? SAY[o][1] : AI.name + ' ' + SAY[o][0];
+        if (swingNo >= SWINGS) { endTurn(); return; }
+        swingNo++;
+        newSwing();
+      }
+
+      function endTurn() {
+        if (cur === 1) {
+          // both have had the same number of turns: is anyone there yet?
+          var a = players[0].score, b = players[1].score;
+          if ((a >= GOAL || b >= GOAL) && a !== b) { done = true; stage = 'over'; return; }
+          round++;
+        }
+        cur = 1 - cur;
+        startTurn();
+      }
+
+      /* ---- the opponent ----------------------------------------- */
+      function snap() { return JSON.stringify({ ring: ring, stage: stage, t: t, aim: aim, power: power }); }
+      function restore(s) {
+        var o = JSON.parse(s);
+        ring = o.ring; stage = o.stage; t = o.t; aim = o.aim; power = o.power;
+      }
+
+      // Terry tries a spread of lines and weights on a copy of the swing,
+      // keeps the one whose neighbours also ring (so a small slip still
+      // pays), then lets go with a human amount of error.
+      function planShot() {
+        var s0 = snap(), NA = 31, NP = 30, vals = [];
+        for (var i = 0; i < NA; i++) {
+          for (var j = 0; j < NP; j++) {
+            restore(s0);
+            aim = -LINE + 2 * LINE * (i + 0.5) / NA;
+            power = (j + 0.5) / NP;
+            send();
+            for (var n = 0; n < 700 && !ring.out; n++) physics(STEP);
+            vals.push(ring.out === 'ring' ? 1 : 0);
+          }
+        }
+        restore(s0);
+        var best = bestOnGrid(vals, NA, NP);
+        return {
+          aim: clamp(-LINE + 2 * LINE * (best.i + 0.5) / NA + gauss() * AI.aimErr, -LINE, LINE),
+          power: clamp((best.j + 0.5) / NP + gauss() * AI.powErr, 0, 1)
+        };
+      }
+
+      function aiTick() {
+        if (stage === 'aim') {
+          if (!plan) { plan = planShot(); t = 0; }
+          if (t > AI.think) { aim = plan.aim; stage = 'power'; t = 0; }
+        } else if (stage === 'power') {
+          if (t > AI.swing + 0.2) { power = plan.power; note = ''; send(); }
+        }
+      }
+
+      /* ---- render ---------------------------------------------- */
+      function render(g) {
+        var wall = api.art('ring/wall.png');
+        if (wall) g.drawImage(wall, 0, 0);
+        else {
+          api.backdrop(0.3);
+          px(HOOK_PX.x - 60, HOOK_PX.y - 150, 120, 160, '#3b2412');   // the plaque
+          px(HOOK_PX.x - 40, HOOK_PX.y - 130, 80, 80, '#24170f');     // the bull
+        }
+        // the hook itself, if there is no painting of it
+        if (!wall) drawHookFallback();
+
+        // where the line you are on meets the wall
+        if (stage === 'aim' || stage === 'power') {
+          var a = stage === 'aim' ? liveAim() : aim;
+          var st = held(a);
+          var far = { x: HOOK.z * Math.tan(a), y: HOOK.y, z: HOOK.z };
+          for (var f = 0.3; f < 0.93; f += 0.09) {
+            var q = proj(st.x + (far.x - st.x) * f, st.y + (far.y - st.y) * f, st.z + (far.z - st.z) * f);
+            var dot = q.s > 300 ? 3 : 2;
+            px(q.x - (dot >> 1), q.y - (dot >> 1), dot, dot, C.brass);
+          }
+          var m = proj(far.x, far.y, far.z);
+          px(m.x - 3, m.y - 3, 7, 7, 'rgba(0,0,0,.55)');
+          px(m.x - 2, m.y - 2, 5, 5, C.ember);
+          px(m.x - 1, m.y - 1, 3, 3, '#f08a5a');
+        }
+
+        // the ring's shadow on the wall as it gets close
+        var near = (ring.z - (WALL - 0.5)) / 0.5;
+        if (near > 0 && !ring.hung) {
+          var sh = proj(ring.x + 0.03, ring.y - 0.05, WALL);
+          ellipse(sh.x, sh.y, RO * sh.s, C.shadow + (0.35 * near).toFixed(2) + ')');
+        }
+
+        var pos = ringPos();
+        drawString(pos);
+        drawRing(pos);
+        var hook = api.art('ring/hook.png');
+        if (ring.hung && hook) {
+          // the bottom of the hook is through the ring, so it sits in front
+          g.drawImage(hook, HOOK_PX.x - 10, HOOK_PX.y + 1);
+        }
+
+        if (flash > 0) px(0, 0, W, H, 'rgba(255,220,140,' + (flash * 0.25).toFixed(2) + ')');
+        if (stage === 'power') drawMeter();
+      }
+      var W = api.W, H = api.H;
+
+      // where to draw the ring: its own position, or settling on the hook
+      function ringPos() {
+        if (!ring.hung) return { x: ring.x, y: ring.y, z: ring.z };
+        var u = Math.min(1, ring.hung.t / 0.12), hgt = ring.hung;
+        // slide in to the wall and drop into the crook of the hook
+        var z = WALL - 0.012, d = z - CAM.z;
+        var hx = CAM.x + (HOOK_PX.x + 0.5 - X0) * d / F, hy = CAM.y - (HOOK_PX.y + 13 - Y0) * d / F;
+        var x = hgt.x0 + (hx - hgt.x0) * u, y = hgt.y0 + (hy - hgt.y0) * u;
+        z = hgt.z0 + (z - hgt.z0) * u;
+        var rock = Math.exp(-3 * hgt.t) * Math.sin(hgt.t * 14) * 0.012 * (1 + Math.abs(hgt.sw));
+        return { x: x + rock, y: y - Math.abs(rock) * 0.3, z: z, hung: true };
+      }
+
+      function drawString(p) {
+        // from the screw-eye (out of shot, above) to the top of the ring;
+        // once it is on the hook the string goes slack across to it
+        var top = proj(p.x, p.y + RO, p.z), eye = proj(0, 0, 0);
+        var x0 = eye.x, y0 = eye.y, x1 = top.x, y1 = top.y;
+        var steps = Math.ceil(Math.abs(y1 - y0)) + 1;
+        for (var s = 0; s <= steps; s++) {
+          var f = s / steps;
+          var yy = y0 + (y1 - y0) * f;
+          if (yy < -2 || yy > H) continue;
+          var sag = p.hung ? Math.sin(f * Math.PI) * 6 : 0;
+          px(x0 + (x1 - x0) * f + sag, yy, 1, 1, (s >> 2) % 3 ? C.string : C.stringLo);
+        }
+      }
+
+      // a brass ring facing the wall, drawn pixel by pixel at its size
+      // in the view: lit from the lamps, upper left
+      function drawRing(p) {
+        var q = proj(p.x, p.y, p.z);
+        var ro = RO * q.s, ri = RI * q.s;
+        var cx = q.x, cy = q.y, n = Math.ceil(ro) + 1;
+        var x0 = Math.round(cx), y0 = Math.round(cy);
+        for (var yy = -n; yy <= n; yy++) {
+          for (var xx = -n; xx <= n; xx++) {
+            var dx = x0 + xx + 0.5 - cx, dy = y0 + yy + 0.5 - cy, d = Math.hypot(dx, dy);
+            if (d > ro || d < ri) continue;
+            var lit = -(dx + dy) / (d * 1.414);          // facing the lamp
+            var edge = (d - ri) / (ro - ri);             // 0 inside lip, 1 outside lip
+            var c = lit > 0.55 ? C.brassHi : (lit > -0.1 ? C.brass : (lit > -0.6 ? C.brassLo : C.brassDk));
+            if ((edge < 0.18 || edge > 0.85) && c === C.brassHi) c = C.brass;
+            ctx.fillStyle = c;
+            ctx.fillRect(x0 + xx, y0 + yy, 1, 1);
+          }
+        }
+      }
+
+      function ellipse(cx, cy, r, col) {
+        ctx.fillStyle = col;
+        for (var yy = -Math.ceil(r * 0.5); yy <= Math.ceil(r * 0.5); yy++) {
+          var w = Math.round(Math.sqrt(Math.max(0, r * r - (yy * 2) * (yy * 2))));
+          ctx.fillRect(Math.round(cx - w), Math.round(cy + yy), w * 2, 1);
+        }
+      }
+
+      function drawHookFallback() {
+        var x = HOOK_PX.x, y = HOOK_PX.y;
+        px(x - 1, y - 8, 3, 12, C.brassLo);
+        px(x - 1, y + 3, 7, 2, C.brass);
+        px(x + 4, y - 3, 2, 6, C.brass);
+      }
+
+      function drawMeter() {
+        var x = 10, y0 = 50, h = 170;
+        px(x - 2, y0 - 2, 16, h + 4, C.meter);
+        var p = livePower();
+        var fill = Math.round(h * p);
+        for (var i = 0; i < fill; i++) {
+          var f = i / h;
+          px(x, y0 + h - i - 1, 12, 1, f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi));
+        }
+        px(x, y0 + h - fill - 2, 12, 2, C.cream);
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        function who(i, label) {
+          return '<span' + (cur === i ? ' class="rival"' : '') + '>' + label + ' <b>' + players[i].score + '</b></span>';
+        }
+        return '<span>ROUND <b>' + round + '</b></span>' + who(0, 'YOU') + who(1, 'TERRY') +
+               '<span>SWING <b>' + Math.min(swingNo, SWINGS) + '</b>/' + SWINGS + '</span>' +
+               '<span>FIRST TO <b>' + GOAL + '</b></span>';
+      }
+
+      function prompt() {
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (cur === 1) {
+          if (stage === 'swing') return 'Terry lets it go.<br><span>Not a word from anyone</span>';
+          return 'Terry\'s swing.<br>' + (sub || '<span>He squints at the bull</span>');
+        }
+        if (stage === 'aim') return 'Your swing. Pick your line to the hook.<br>' + (sub || '<span>The red mark is where this line meets the wall</span>');
+        if (stage === 'power') return 'Now how hard you send it.<br><span>Enough to reach, gentle enough to stay on</span>';
+        if (stage === 'swing') return '&nbsp;<br><span>Go on...</span>';
+        return '&nbsp;';
+      }
+
+      function action() {
+        if (cur === 1) return 'Terry is up';
+        if (stage === 'aim') return 'Set line';
+        if (stage === 'power') return 'Let go';
+        return '...';
+      }
+
+      function settled() { return done; }
+
+      function result() {
+        var a = players[0].score, b = players[1].score, v;
+        if (a > b && b <= 2) v = 'Hardly let him near it. <b>Terry says the string has stretched.</b>';
+        else if (a > b) v = 'You take it off Terry. <b>He rings it once more on his own, for the look of the thing.</b>';
+        else if (b - a >= 4) v = 'Terry has had this hook since before you were born, <b>and it shows.</b>';
+        else v = 'Close, but the bull is Terry\'s. <b>He winks at it.</b>';
+        return {
+          score: a, rivalScore: b,
+          title: a > b ? 'You ring the bull' : 'Terry rings the bull',
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
+  });
+
   /* ---- the rest of the room, waiting on their modules ---- */
   [
-    { id: 'ring', name: 'Ring the Bull', sub: 'One ring, one hook',
-      blurb: 'A brass ring on a string, a hook on the wall, and the whole game in the moment you let go.' },
     { id: 'toad', name: 'Toad in the Hole', sub: 'Brass discs, lead top',
       blurb: 'Lob four brass discs at a hole in a lead-topped table from eight feet. Sussex\'s own, and unforgiving.' },
     { id: 'fruit', name: 'The Machine', sub: 'Nudge, hold, repent',
