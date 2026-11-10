@@ -231,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and the first three games on it: Bar Skittles, Shove Ha'penny and Ring the Bull, all in their first real art.</p>
+    <p class="tagline">The shell, and four games on it: Bar Skittles, Shove Ha'penny, Ring the Bull and Toad in the Hole.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -284,6 +284,7 @@ h2{
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
     <p>Ring the Bull is the one game in true 3D: a ring on a 1.6m string from the ceiling, swinging on a sphere, seen from behind your shoulder. The hook stands 6cm off the wall, so the ring has to reach it with the hole lined up, and arrive slowly enough to drop on rather than bang the wall and jump off. Held back and let go, a pendulum keeps to its line, so where you point it is where it meets the wall.</p>
+    <p>Toad in the Hole is 3D as well: a brass disc pitched from eight feet at an 18-inch lead top, seen from where you stand. Lead is dead, so a toad stops near where it lands and only creeps; one that creeps over the hole slowly enough drops through. The table never moves, so it is ray-cast once, pixel by pixel, and kept. Pearl plays the finish: she knows going past 31 scratches the turn, and will take one point over two when one is all she needs.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -1960,10 +1961,474 @@ h2{
     }
   });
 
+  /* ================================================================
+     GAME MODULE — Toad in the Hole
+     A lead-topped table eight feet away with a hole in the middle.
+     Four brass toads a turn: one point for a toad left on the top,
+     two for one through the hole. Turn about to exactly 31; go over
+     and the whole turn is scratched.
+     ================================================================ */
+
+  register({
+    id: 'toad',
+    name: 'Toad in the Hole',
+    sub: 'Brass toads, lead top',
+    blurb: 'Pitch four brass toads at a lead-topped table from eight feet: two for the hole, one for the top. Against Pearl, to exactly 31.',
+    rival: 'Pearl',
+    available: true,
+
+    create: function (api) {
+      // --- the world, in metres: x across, y up, z away from you along the floor
+      var G = 9.81;
+      var TOP_Y = 0.76;                   // the lead top, 2'6" off the floor
+      var TZ = 2.44, HALF = 0.23;         // 8ft to the middle of an 18" square top
+      var HOLE_R = 0.034;                 // 2.7" hole
+      var TOAD_R = 0.024, TOAD_T = 0.008; // 1.9" brass disc
+      var FROM = { x: 0, y: 1.2, z: 0.35 };   // where it leaves your hand
+      var LIFT = 28 * Math.PI / 180;      // you pitch it up at this angle
+      var V_LO = 3.8, V_HI = 5.2;         // m/s at an empty and a full meter
+      var LINE = 0.13;                    // the line sweeps +/- this many radians
+      var KEEP = 0.12;                    // the lead takes most of the pace on landing
+      var MU = 5.5;                       // and drags the rest out of it (m/s^2)
+      var DROP_V = 0.45;                  // slower than this over the hole, it drops
+      var TOADS = 4, GOAL = 31;
+
+      // --- the camera: standing at the oche, looking down at the table
+      var CAM = { x: 0.3, y: 2.1, z: 0.45 }, LOOK = { x: 0.02, y: 0.55, z: TZ };
+      var F = 600, CX = 240, CY = 140;
+      function sub(a, b) { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+      function dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+      function norm(a) { var l = Math.sqrt(dot(a, a)); return { x: a.x / l, y: a.y / l, z: a.z / l }; }
+      function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
+      var FW = norm(sub(LOOK, CAM)), RT = norm(cross({ x: 0, y: 1, z: 0 }, FW)), UP = cross(FW, RT);
+      function proj(x, y, z) {
+        var d = { x: x - CAM.x, y: y - CAM.y, z: z - CAM.z }, cz = dot(d, FW);
+        return { x: CX + F * dot(d, RT) / cz, y: CY - F * dot(d, UP) / cz, s: F / cz, z: cz };
+      }
+      // how flat a horizontal disc looks at depth: its height over its width
+      function squash(x, z) {
+        var d = norm({ x: x - CAM.x, y: TOP_Y - CAM.y, z: z - CAM.z });
+        return Math.max(0.2, -d.y);
+      }
+
+      var C = {
+        brass: '#d9a63c', brassHi: '#f6d88a', brassLo: '#8d6417', brassDk: '#4f360c',
+        ember: '#c4502a', cream: '#f3e6cf', shadow: 'rgba(0,0,0,',
+        meter: '#2b211a', meterLo: '#7fa05a', meterMid: '#d9a63c', meterHi: '#c4502a'
+      };
+
+      // Pearl has a Sussex wrist. Errors are one standard deviation.
+      var AI = { name: 'Pearl', aimErr: 0.018, powErr: 0.06, think: 1.0, swing: 0.7 };
+
+      var toads, cur, stage, t, aim, power, thrown, players, who, round, done, note, plan, tallyT, winner, last;
+
+      function tri(time, period) {
+        var u = (time % period) / period;
+        return u < 0.5 ? u * 2 : 2 - u * 2;
+      }
+
+      function init() {
+        players = [{ name: 'You', score: 0 }, { name: AI.name, score: 0 }];
+        who = 0; round = 1; done = false; note = ''; winner = -1; last = null;
+        newTurn();
+      }
+
+      function newTurn() { toads = []; thrown = 0; newToad(); }
+
+      function newToad() {
+        stage = 'aim'; t = 0; aim = 0; power = 0; plan = null;
+        cur = null;
+      }
+
+      function liveAim() {
+        if (who === 1 && plan && t > 0.5) return plan.aim;
+        return LINE * (2 * tri(t, 2.2) - 1);
+      }
+      function livePower() {
+        return (who === 1 && plan) ? Math.min(plan.power, t / AI.swing) : tri(t, 1.6);
+      }
+
+      function press() {
+        if (who !== 0) return;            // Pearl's turn: hands off
+        if (stage === 'aim') { aim = liveAim(); stage = 'power'; t = 0; }
+        else if (stage === 'power') { power = livePower(); note = ''; pitch(); }
+      }
+
+      function pitch() {
+        var v = V_LO + power * (V_HI - V_LO), h = v * Math.cos(LIFT);
+        cur = { x: FROM.x, y: FROM.y, z: FROM.z, vx: Math.sin(aim) * h, vy: v * Math.sin(LIFT), vz: Math.cos(aim) * h,
+                st: 'fly', spin: 0 };
+        toads.push(cur);
+        thrown++;
+        stage = 'fly'; t = 0;
+      }
+
+      function onTop(x, z) { return Math.abs(x) <= HALF && Math.abs(z - TZ) <= HALF; }
+
+      // One fixed step of the throw. Returns true once nothing is moving.
+      // Pearl runs this same function, on a copy, to try out throws.
+      function physics(dt) {
+        t += dt;
+        var i, j, a, b, moving = false;
+        for (i = 0; i < toads.length; i++) {
+          a = toads[i];
+          if (a.st === 'fly' || a.st === 'fall') {
+            moving = true;
+            a.vy -= G * dt;
+            var ox = a.x, oz = a.z, oy = a.y;
+            a.x += a.vx * dt; a.y += a.vy * dt; a.z += a.vz * dt; a.spin += dt * 9;
+            // the front of the table: a low one clatters off it
+            if (a.st === 'fly' && oz < TZ - HALF && a.z >= TZ - HALF && a.y < TOP_Y && Math.abs(a.x) < HALF) {
+              a.z = TZ - HALF - TOAD_R; a.vz = -0.25 * a.vz; a.vx *= 0.5; a.st = 'fall'; a.why = 'short';
+            }
+            if (a.st === 'fly' && a.y <= TOP_Y + TOAD_T / 2 && oy > TOP_Y && onTop(a.x, a.z)) {
+              // down on the lead: it dies there, near enough
+              a.y = TOP_Y + TOAD_T / 2; a.vy = 0; a.vx *= KEEP; a.vz *= KEEP; a.st = 'slide';
+              if (Math.hypot(a.x, a.z - TZ) < HOLE_R) { a.st = 'hole'; a.vx = a.vz = 0; }
+            }
+            if (a.y <= TOAD_T / 2) {
+              a.y = TOAD_T / 2; a.vx = a.vy = a.vz = 0;
+              if (a.st === 'fly') a.why = Math.abs(a.x) > HALF ? 'wide' : (a.z < TZ ? 'short' : 'long');
+              a.st = 'floor';
+            }
+          } else if (a.st === 'slide') {
+            var sp = Math.hypot(a.vx, a.vz);
+            if (sp > 0) {
+              moving = true;
+              a.x += a.vx * dt; a.z += a.vz * dt;
+              var ns = sp - MU * dt;
+              if (ns <= 0.02) { a.vx = a.vz = 0; }
+              else { a.vx *= ns / sp; a.vz *= ns / sp; }
+              if (Math.hypot(a.x, a.z - TZ) < HOLE_R && ns < DROP_V) { a.st = 'hole'; a.vx = a.vz = 0; }
+              else if (!onTop(a.x, a.z)) { a.st = 'fall'; a.why = 'off'; a.vy = 0; }
+            }
+          }
+        }
+        // toad on toad, flat on the lead: equal masses, a dull knock
+        for (i = 0; i < toads.length; i++) {
+          for (j = i + 1; j < toads.length; j++) {
+            a = toads[i]; b = toads[j];
+            if (a.st !== 'slide' || b.st !== 'slide') continue;
+            var dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+            if (d >= TOAD_R * 2 || d < 1e-6) continue;
+            var nx = dx / d, nz = dz / d, over = TOAD_R * 2 - d;
+            a.x -= nx * over / 2; a.z -= nz * over / 2; b.x += nx * over / 2; b.z += nz * over / 2;
+            var vr = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+            if (vr < 0) {
+              var imp = -(1 + 0.45) * vr / 2;
+              a.vx -= nx * imp; a.vz -= nz * imp; b.vx += nx * imp; b.vz += nz * imp;
+            }
+          }
+        }
+        return !moving && t > 0.2;
+      }
+
+      function points() {
+        var p = 0;
+        for (var i = 0; i < toads.length; i++) p += toads[i].st === 'hole' ? 2 : (toads[i].st === 'slide' ? 1 : 0);
+        return p;
+      }
+
+      function update(dt) {
+        if (stage === 'fly') {
+          if (physics(dt)) afterThrow();
+          return;
+        }
+        t += dt;
+        if (stage === 'tally') {
+          tallyT -= dt;
+          if (tallyT <= 0) endTurn();
+          return;
+        }
+        if (who === 1 && !done) aiTick();
+      }
+
+      function afterThrow() {
+        var name = who === 0 ? 'You' : AI.name, c = cur;
+        var p = points(), need = GOAL - players[who].score;
+        if (c.st === 'hole') note = name + (who === 0 ? ' put it down the hole' : ' puts it down the hole');
+        else if (c.st === 'slide') note = name + (who === 0 ? ' kept it on the top' : ' keeps it on the top');
+        else if (who === 0) note = { short: 'Short', off: 'Slid off the back', wide: 'Wide', long: 'Long' }[c.why] || 'Missed';
+        else note = name + { short: ' falls short', off: ' slides one off', wide: ' goes wide', long: ' goes long' }[c.why];
+        if (p > need) note += '. That is over';
+        // exactly 31 finishes it there and then
+        if (thrown >= TOADS || p === need) { tally(); return; }
+        newToad();
+      }
+
+      function tally() {
+        stage = 'tally'; tallyT = 1.6;
+        var p = points(), need = GOAL - players[who].score;
+        var name = who === 0 ? 'You' : AI.name;
+        if (p > need) { note = (who === 0 ? 'Over 31: your ' : 'Over 31: Pearl\'s ') + p + ' is scratched'; last = { who: who, p: 0 }; return; }
+        players[who].score += p;
+        last = { who: who, p: p };
+        if (players[who].score === GOAL) { winner = who; note = name + (who === 0 ? ' make' : ' makes') + ' it 31 exactly'; return; }
+        note = (p === 0 ? name + (who === 0 ? ' score nothing' : ' scores nothing') :
+                name + (who === 0 ? ' score ' : ' scores ') + p + (p === 1 ? ' point' : ' points')) + '. ' + (GOAL - players[who].score) + ' to go';
+      }
+
+      function endTurn() {
+        if (winner >= 0) { done = true; stage = 'over'; return; }
+        if (who === 1) round++;
+        who = 1 - who;
+        newTurn();
+      }
+
+      /* ---- the opponent ----------------------------------------- */
+      function snap() { return JSON.stringify({ toads: toads, stage: stage, t: t, thrown: thrown, aim: aim, power: power }); }
+      function restore(s) {
+        var o = JSON.parse(s);
+        toads = o.toads; stage = o.stage; t = o.t; thrown = o.thrown; aim = o.aim; power = o.power;
+        cur = toads[toads.length - 1] || null;
+      }
+
+      // What a finished table is worth to Pearl. Points count until they
+      // would take her past 31; exactly 31 is the best thing on the table,
+      // and going over scratches the whole turn.
+      function worth(p, need, left) {
+        if (p > need) return -3;
+        if (p === need) return 6;
+        // with toads still to come, being one or two short is a fine place to be
+        return p + (left > 0 && need - p <= 2 ? 0.5 : 0);
+      }
+
+      // Pearl tries a spread of lines and weights on a copy of the table,
+      // values where everything ends up, keeps the throw whose neighbours
+      // also do well, then pitches it with a human amount of error.
+      function planShot() {
+        var s0 = snap(), NA = 25, NP = 56, vals = [];
+        var need = GOAL - players[1].score, left = TOADS - thrown - 1;
+        for (var i = 0; i < NA; i++) {
+          for (var j = 0; j < NP; j++) {
+            restore(s0);
+            aim = -LINE + 2 * LINE * (i + 0.5) / NA;
+            power = (j + 0.5) / NP;
+            pitch();
+            for (var n = 0; n < 600 && !physics(STEP); n++);
+            vals.push(worth(points(), need, left));
+          }
+        }
+        restore(s0);
+        var best = bestOnGrid(vals, NA, NP);
+        return {
+          aim: clamp(-LINE + 2 * LINE * (best.i + 0.5) / NA + gauss() * AI.aimErr, -LINE, LINE),
+          power: clamp((best.j + 0.5) / NP + gauss() * AI.powErr, 0, 1)
+        };
+      }
+
+      function aiTick() {
+        if (stage === 'aim') {
+          if (!plan) { plan = planShot(); t = 0; }
+          if (t > AI.think) { aim = plan.aim; stage = 'power'; t = 0; }
+        } else if (stage === 'power') {
+          if (t > AI.swing + 0.2) { power = plan.power; note = ''; pitch(); }
+        }
+      }
+
+      /* ---- render ---------------------------------------------- */
+      var W = api.W, H = api.H;
+      var table = null;                   // the table never moves, so it is drawn once
+
+      // a little hash for the lead's dimples and the grain
+      function hash(x, y) {
+        var h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+        return h - Math.floor(h);
+      }
+
+      function buildTable() {
+        var cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        var g = cv.getContext('2d');
+        var LEAD = HALF - 0.028;          // lead inside an oak rim
+        var front = TZ - HALF;
+        for (var sy = 0; sy < H; sy++) {
+          for (var sx = 0; sx < W; sx++) {
+            // the ray through this pixel
+            var ux = (sx + 0.5 - CX) / F, uy = (sy + 0.5 - CY) / F;
+            var dir = { x: FW.x + RT.x * ux - UP.x * uy, y: FW.y + RT.y * ux - UP.y * uy, z: FW.z + RT.z * ux - UP.z * uy };
+            var col = null;
+            // the top
+            if (dir.y < 0) {
+              var k = (TOP_Y - CAM.y) / dir.y;
+              var wx = CAM.x + dir.x * k, wz = CAM.z + dir.z * k;
+              if (Math.abs(wx) <= HALF && Math.abs(wz - TZ) <= HALF) {
+                var hx = wx, hz = wz - TZ, hr = Math.hypot(hx, hz);
+                var n = 0.55 * hash(Math.floor(wx * 40), Math.floor(wz * 40)) + 0.45 * hash(Math.floor(wx * 150), Math.floor(wz * 150));
+                if (hr < HOLE_R) {
+                  // down the hole: dark, with the far wall catching the lamp
+                  col = hz > HOLE_R * 0.25 ? '#2a221b' : '#0b0806';
+                } else if (Math.abs(wx) <= LEAD && Math.abs(wz - TZ) <= LEAD) {
+                  var lv = 0.5 + 0.1 * (n - 0.5) + (hr < HOLE_R + 0.008 ? -0.12 : 0) + (hz < 0 && hr < HOLE_R + 0.008 ? 0.2 : 0);
+                  lv += 0.15 * (1 - Math.min(1, Math.hypot(wx + 0.08, wz - TZ + 0.1) / 0.3));   // the lamp's sheen
+                  col = lv > 0.6 ? '#8f969a' : (lv > 0.5 ? '#767d81' : (lv > 0.42 ? '#62686c' : '#4b5054'));
+                } else {
+                  var gr = hash(Math.floor(wx * 600), 7) ;
+                  col = gr > 0.66 ? '#7d5029' : (gr > 0.33 ? '#6b4322' : '#5c3a1e');
+                  if (Math.abs(wx) > HALF - 0.004 || Math.abs(wz - TZ) > HALF - 0.004) col = '#8d5e33';
+                }
+              }
+            }
+            // the front of the cabinet, with the drawer the toads drop into
+            if (!col && dir.z > 0) {
+              var k2 = (front - CAM.z) / dir.z;
+              var fx = CAM.x + dir.x * k2, fy = CAM.y + dir.y * k2;
+              if (Math.abs(fx) <= HALF && fy >= 0 && fy <= TOP_Y) {
+                var g2 = hash(Math.floor(fx * 500), Math.floor(fy * 40));
+                col = g2 > 0.6 ? '#4a2d17' : '#3f2613';
+                if (Math.abs(fx) > HALF - 0.03 || (fy > 0.1 && fy < 0.12) || (fy > 0.4 && fy < 0.42)) col = '#35200f';
+                if (Math.abs(fx) > HALF - 0.006) col = '#5c3a1e';
+                if (fy > TOP_Y - 0.03) col = '#2a180b';
+                if (Math.abs(fx) < 0.12 && fy > 0.48 && fy < 0.6) col = (fy > 0.585 || fy < 0.495 || Math.abs(fx) > 0.115) ? '#2a180b' : '#5c3a1e';
+                if (Math.abs(fx) < 0.018 && fy > 0.525 && fy < 0.55) col = '#d9a63c';                 // the brass pull
+                if (fy < 0.08) col = '#24150a';
+              }
+            }
+            // the right-hand side of the cabinet, in shadow
+            if (!col && dir.x > 0 && CAM.x > HALF) {
+              var k3 = (HALF - CAM.x) / dir.x;
+              var lz = CAM.z + dir.z * k3, ly = CAM.y + dir.y * k3;
+              if (lz >= front && lz <= TZ + HALF && ly >= 0 && ly <= TOP_Y) {
+                var g3 = hash(Math.floor(lz * 500), Math.floor(ly * 40));
+                col = g3 > 0.6 ? '#2e1c0e' : '#27170b';
+                if (ly > TOP_Y - 0.03) col = '#1f1208';
+                if (ly < 0.08) col = '#170d06';
+              }
+            }
+            if (col) { g.fillStyle = col; g.fillRect(sx, sy, 1, 1); }
+          }
+        }
+        return cv;
+      }
+
+      function render(g) {
+        api.backdrop(0.45);
+        // its shadow on the floor
+        var f0 = proj(-HALF, 0, TZ - HALF), f1 = proj(HALF, 0, TZ - HALF);
+        ellipse((f0.x + f1.x) / 2 + 6, f0.y - 2, (f1.x - f0.x) / 2 + 14, 6, 'rgba(0,0,0,.45)');
+        if (!table) table = buildTable();
+        g.drawImage(table, 0, 0);
+
+        // where this line meets the table
+        if (stage === 'aim' || stage === 'power') {
+          var a = stage === 'aim' ? liveAim() : aim;
+          for (var d = TZ - HALF + 0.04; d < TZ + HALF; d += 0.07) {
+            var q = proj(Math.sin(a) * d, d > TZ - HALF ? TOP_Y : 0, Math.cos(a) * d);
+            if (d > TZ - HALF && d < TZ + HALF) { px(q.x - 2, q.y - 1, 5, 3, 'rgba(0,0,0,.5)'); px(q.x - 1, q.y - 1, 3, 2, C.ember); }
+          }
+        }
+
+        // toads, far to near; the ones down the hole are gone
+        var list = toads.slice().sort(function (p, q) { return q.z - p.z; });
+        for (var i = 0; i < list.length; i++) if (list[i].st !== 'hole') drawToad(list[i]);
+
+        if (stage === 'power') drawMeter();
+      }
+
+      // a brass disc, flat, drawn as a pixel ellipse at its depth
+      function drawToad(a) {
+        var flying = a.st === 'fly' || a.st === 'fall';
+        var ground = (a.st === 'floor' || !onTop(a.x, a.z)) ? 0 : TOP_Y;
+        if (flying) {
+          var sh = proj(a.x, ground, a.z);
+          if (sh.z > 0.3) ellipse(sh.x, sh.y, TOAD_R * sh.s, TOAD_R * sh.s * squash(a.x, a.z), C.shadow + '0.35)');
+        }
+        var q = proj(a.x, a.y, a.z);
+        if (q.z < 0.3) return;
+        var rx = TOAD_R * q.s, ry = Math.max(1, rx * squash(a.x, a.z) * (flying ? 0.75 + 0.25 * Math.abs(Math.cos(a.spin)) : 1));
+        var th = Math.max(1, Math.round(TOAD_T * q.s * 0.8));
+        ellipse(q.x, q.y + th, rx, ry, C.brassDk);                  // its edge
+        var x0 = Math.round(q.x), y0 = Math.round(q.y), n = Math.ceil(rx) + 1, m = Math.ceil(ry) + 1;
+        for (var yy = -m; yy <= m; yy++) {
+          for (var xx = -n; xx <= n; xx++) {
+            var dx = (x0 + xx + 0.5 - q.x) / rx, dy = (y0 + yy + 0.5 - q.y) / ry, e = dx * dx + dy * dy;
+            if (e > 1) continue;
+            var lit = -(dx * 0.7 + dy * 0.7);
+            var c = e > 0.7 ? C.brassLo : (lit > 0.45 ? C.brassHi : (lit > -0.3 ? C.brass : C.brassLo));
+            ctx.fillStyle = c; ctx.fillRect(x0 + xx, y0 + yy, 1, 1);
+          }
+        }
+      }
+
+      function ellipse(cx, cy, rx, ry, col) {
+        ctx.fillStyle = col;
+        var m = Math.ceil(ry);
+        for (var yy = -m; yy <= m; yy++) {
+          var f = 1 - (yy * yy) / (ry * ry);
+          if (f < 0) continue;
+          var w = Math.round(rx * Math.sqrt(f));
+          ctx.fillRect(Math.round(cx - w), Math.round(cy + yy), w * 2 + 1, 1);
+        }
+      }
+
+      function drawMeter() {
+        var x = 10, y0 = 50, h = 170;
+        px(x - 2, y0 - 2, 16, h + 4, C.meter);
+        var p = livePower();
+        var fill = Math.round(h * p);
+        for (var i = 0; i < fill; i++) {
+          var f = i / h;
+          px(x, y0 + h - i - 1, 12, 1, f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi));
+        }
+        px(x, y0 + h - fill - 2, 12, 2, C.cream);
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        function side(i, label) {
+          return '<span' + (who === i ? ' class="rival"' : '') + '>' + label + ' <b>' + players[i].score + '</b></span>';
+        }
+        var on = stage === 'tally' ? '' : '<span>THIS TURN <b>' + points() + '</b></span>';
+        return '<span>ROUND <b>' + round + '</b></span>' + side(0, 'YOU') + side(1, 'PEARL') + on +
+               '<span>TOAD <b>' + Math.min(thrown + (stage === 'fly' || stage === 'tally' ? 0 : 1), TOADS) + '</b>/' + TOADS + '</span>' +
+               '<span>TO <b>' + GOAL + '</b> EXACTLY</span>';
+      }
+
+      function prompt() {
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (stage === 'tally') return '&nbsp;<br>' + sub;
+        if (who === 1) {
+          if (stage === 'fly') return 'Pearl pitches.<br><span>Underarm, no fuss</span>';
+          return 'Pearl\'s turn.<br>' + (sub || '<span>She weighs a toad in her hand</span>');
+        }
+        var need = GOAL - players[0].score - points();
+        if (stage === 'aim') return 'Your toad. Pick your line.<br>' + (sub || '<span>Two for the hole, one for the top. You need ' + need + '</span>');
+        if (stage === 'power') return 'Now the pitch.<br><span>The lead kills it where it lands. You need ' + need + '</span>';
+        if (stage === 'fly') return '&nbsp;<br><span>Go on...</span>';
+        return '&nbsp;';
+      }
+
+      function action() {
+        if (who === 1) return 'Pearl is up';
+        if (stage === 'aim') return 'Set line';
+        if (stage === 'power') return 'Pitch';
+        return '...';
+      }
+
+      function settled() { return done; }
+
+      function result() {
+        var a = players[0].score, b = players[1].score, v;
+        if (winner === 0 && b <= 20) v = 'Thirty-one on the nail. <b>Pearl says Sussex will hear about this.</b>';
+        else if (winner === 0) v = 'You get there first. <b>Pearl says she let you have the hole.</b>';
+        else if (a >= 25) v = 'So close. <b>Pearl tells you the last few are the hardest, kindly.</b>';
+        else v = 'Pearl pegs out on 31 <b>and goes to get her coat.</b>';
+        return {
+          score: a, rivalScore: b,
+          title: winner === 0 ? 'You make 31' : 'Pearl makes 31',
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
+  });
+
   /* ---- the rest of the room, waiting on their modules ---- */
   [
-    { id: 'toad', name: 'Toad in the Hole', sub: 'Brass discs, lead top',
-      blurb: 'Lob four brass discs at a hole in a lead-topped table from eight feet. Sussex\'s own, and unforgiving.' },
     { id: 'fruit', name: 'The Machine', sub: 'Nudge, hold, repent',
       blurb: 'The cabinet in the corner that quietly takes whatever you won at the other tables.' },
     { id: 'doms', name: 'Dominoes', sub: 'Fives and threes',
