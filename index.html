@@ -231,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and the first two games on it. Bar Skittles and the room are wearing their first real art; Shove Ha'penny is still placeholder blocks.</p>
+    <p class="tagline">The shell, and the first two games on it. Both games and the room are wearing their first real art.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -278,7 +278,7 @@ h2{
       <span class="spec">POST <b>12&times;54</b></span>
       <span class="spec">PINT <b>11&times;17</b></span>
       <span class="spec">ROOM <b>480&times;270</b></span>
-      <span class="spec">COIN <b>17&times;17</b></span>
+      <span class="spec">COIN <b>16&times;16</b></span>
     </div>
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
@@ -316,7 +316,8 @@ h2{
     return (im.complete && im.naturalWidth) ? im : null;
   }
   ['room/backdrop.png', 'room/pint.png', 'skittles/pin.png', 'skittles/ball.png',
-   'skittles/post.png', 'skittles/wood.png'].forEach(art);
+   'skittles/post.png', 'skittles/wood.png', 'shove/coin.png', 'shove/board.png',
+   'shove/slate.png'].forEach(art);
 
   /* ---- the room behind every game: the shell's own layer, drawn
      first and knocked back so whatever is on the table reads first. */
@@ -1381,21 +1382,39 @@ h2{
         // the room, then the bar top the board and the chalk boards sit on
         api.backdrop(0.3);
         px(90, 0, 300, H, 'rgba(0,0,0,.45)');
-        px(96, 0, 288, H, C.floor);
+        var top = api.art('skittles/wood.png');
+        if (top) {
+          // the same mahogany as the skittles table, laid twice to cover the height
+          g.drawImage(top, 60, 0, 288, 208, 96, 0, 288, 208);
+          g.drawImage(top, 60, 140, 288, H - 208, 96, 208, 288, H - 208);
+          px(96, 0, 288, H, 'rgba(20,10,4,.5)');
+        } else px(96, 0, 288, H, C.floor);
         px(96, 0, 1, H, C.woodLo);
         px(383, 0, 1, H, C.woodLo);
 
         // board
         px(BX0 - 4, BY0 - 4, BX1 - BX0 + 8, BY1 - BY0 + 8, C.edge);
-        px(BX0, BY0, BX1 - BX0, BY1 - BY0, C.wood);
-        px(BX0, BY0, BX1 - BX0, 2, C.woodHi);
-        px(BX0, BY0, 2, BY1 - BY0, C.woodLo);
-        px(BX1 - 2, BY0, 2, BY1 - BY0, C.woodLo);
-        // grain
-        for (var gy = BY0 + 7; gy < BY1; gy += 13) px(BX0 + 6 + (gy * 7) % 23, gy, 36, 1, C.woodLo);
+        px(BX0 - 4, BY0 - 4, BX1 - BX0 + 8, 1, C.woodLo);
+        var board = api.art('shove/board.png');
+        if (board) {
+          g.drawImage(board, 0, 0, BX1 - BX0, BY1 - BY0, BX0, BY0, BX1 - BX0, BY1 - BY0);
+          px(BX0, BY0, BX1 - BX0, BY1 - BY0, 'rgba(60,30,10,.28)');   // a century of beer and elbows
+          px(BX0, BY0, 2, BY1 - BY0, 'rgba(0,0,0,.18)');
+          px(BX1 - 2, BY0, 2, BY1 - BY0, 'rgba(0,0,0,.18)');
+        } else {
+          px(BX0, BY0, BX1 - BX0, BY1 - BY0, C.wood);
+          px(BX0, BY0, BX1 - BX0, 2, C.woodHi);
+          px(BX0, BY0, 2, BY1 - BY0, C.woodLo);
+          px(BX1 - 2, BY0, 2, BY1 - BY0, C.woodLo);
+          // grain
+          for (var gy = BY0 + 7; gy < BY1; gy += 13) px(BX0 + 6 + (gy * 7) % 23, gy, 36, 1, C.woodLo);
+        }
 
         // lines
-        for (var i = 0; i <= BEDS; i++) px(BX0, lineY(i), BX1 - BX0, 1, C.line);
+        for (var i = 0; i <= BEDS; i++) {
+          px(BX0, lineY(i), BX1 - BX0, 1, C.line);
+          px(BX0, lineY(i) + 1, BX1 - BX0, 1, 'rgba(60,30,10,.45)');
+        }
 
         // chalk boards either side: yours on the right, Edna's on the left
         for (var k = 0; k < BEDS; k++) {
@@ -1421,15 +1440,33 @@ h2{
       }
 
       function drawChalk(x, cy, n) {
-        px(x, cy, 32, PITCH - 5, C.chalkBoard);
+        var slate = api.art('shove/slate.png'), h = PITCH - 5;
+        px(x - 1, cy - 1, 34, h + 2, C.edge);
+        if (slate) {
+          ctx.drawImage(slate, 4, (cy * 7) % (slate.height - h), 32, h, x, cy, 32, h);
+          px(x, cy, 32, h, 'rgba(20,20,24,.6)');   // wiped, so the old smudges don't read as marks
+        }
+        else px(x, cy, 32, h, C.chalkBoard);
         for (var m = 0; m < 3; m++) px(x + 6 + m * 8, cy + 3, 2, PITCH - 11, m < n ? C.chalk : C.chalkDim);
         if (n >= 3) px(x + 2, cy + Math.floor((PITCH - 5) / 2) - 1, 28, 2, C.chalk);
       }
 
-      var COIN_ROWS = discRows(17);
+      var COIN_ROWS = discRows(17), RING_ROWS = discRows(19);
 
       function drawCoin(c) {
         var x = Math.round(c.x), y = Math.round(c.y);
+        var im = api.art('shove/coin.png');
+        if (im) {
+          px(x - 7, y + 7, 16, 2, C.shadow);
+          // how the coin scored: a ring of colour round it, or greyed out
+          if (c.mark === 'good' || c.mark === 'gift') {
+            stack(x, y + 10, RING_ROWS, fillCols(19, function () { return c.mark === 'good' ? C.good : C.gift; }));
+          }
+          if (c.mark === 'dead') ctx.globalAlpha = 0.4;
+          ctx.drawImage(im, x - (im.width >> 1), y - (im.height >> 1));
+          ctx.globalAlpha = 1;
+          return;
+        }
         var body = C.coin, hi = C.coinHi;
         if (c.mark === 'good') { body = C.good; hi = C.cream; }
         else if (c.mark === 'dead') { body = C.dead; hi = C.dead; }
