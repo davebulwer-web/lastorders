@@ -38,7 +38,7 @@ body{
 }
 
 .wrap{
-  max-width: 780px;
+  max-width: 1040px;
   margin: 0 auto;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -229,7 +229,7 @@ h2{
   <!-- ===== Playfield ===== -->
   <div id="table">
     <div class="hud" id="hud"></div>
-    <div id="stage"><canvas id="screen" width="240" height="160" aria-label="Bar skittles playfield"></canvas></div>
+    <div id="stage"><canvas id="screen" width="480" height="270" aria-label="Game playfield"></canvas></div>
     <div class="prompt" id="prompt"></div>
     <div class="row">
       <button id="btn-act" class="primary" type="button">Throw</button>
@@ -263,14 +263,14 @@ h2{
   <div class="notes">
     <h2>BUILD NOTES</h2>
     <p>Every game is a module that honours one contract — <code>init</code>, <code>update</code>, <code>render</code>, <code>press</code>, <code>settled</code>, <code>result</code> — so the shell never knows what it is running. Adding the next one is a new file, not a new engine.</p>
-    <p>The playfield renders at 240&times;160 and scales up with nearest-neighbour, so these placeholder blocks are already the exact pixel dimensions the sprites need to be:</p>
+    <p>The playfield renders at 480&times;270 (16:9, an exact 4&times; of 1080p) and scales up by whole numbers with nearest-neighbour, so these placeholder blocks are already the exact pixel dimensions the sprites need to be:</p>
     <div class="specs">
-      <span class="spec">BALL <b>7&times;7</b></span>
-      <span class="spec">SKITTLE <b>7&times;13</b></span>
-      <span class="spec">SKITTLE FALLEN <b>11&times;5</b></span>
-      <span class="spec">POST <b>5&times;26</b></span>
-      <span class="spec">PINT <b>5&times;9</b></span>
-      <span class="spec">COIN <b>9&times;9</b></span>
+      <span class="spec">BALL <b>15&times;15</b></span>
+      <span class="spec">SKITTLE <b>13&times;25</b></span>
+      <span class="spec">SKITTLE FALLEN <b>21&times;9</b> / <b>9&times;17</b></span>
+      <span class="spec">POST <b>9&times;50</b></span>
+      <span class="spec">PINT <b>9&times;17</b></span>
+      <span class="spec">COIN <b>17&times;17</b></span>
     </div>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
@@ -288,7 +288,7 @@ h2{
      Knows nothing about any individual game.
      ================================================================ */
 
-  var W = 240, H = 160;
+  var W = 480, H = 270;
   var canvas = document.getElementById('screen');
   var ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
@@ -307,9 +307,11 @@ h2{
   function fit() {
     var stage = document.getElementById('stage');
     var availW = stage.clientWidth - 20;
-    var availH = Math.min(window.innerHeight * 0.58, 440);
+    var availH = Math.max(window.innerHeight * 0.7, 300);
     var s = Math.min(availW / W, availH / H);
-    s = Math.max(1, Math.floor(s * 2) / 2);
+    // whole-number scales only, so every art pixel is the same size on
+    // screen; below 1x (phones) there is no choice but to shrink
+    s = s >= 1 ? Math.floor(s) : s;
     canvas.style.width = (W * s) + 'px';
     canvas.style.height = (H * s) + 'px';
   }
@@ -442,6 +444,25 @@ h2{
     }
   }
 
+  // odd row-widths for a filled disc of diameter d (d odd)
+  function discRows(d) {
+    var r = d / 2, out = [];
+    for (var i = 0; i < d; i++) {
+      var yy = i + 0.5 - r;
+      var w = 2 * Math.round(Math.sqrt(Math.max(0, r * r - yy * yy)) - 0.5) + 1;
+      out.push(Math.max(1, w));
+    }
+    return out;
+  }
+  function fillCols(n, fn) { var c = []; for (var i = 0; i < n; i++) c.push(fn(i, n)); return c; }
+
+  // the pint somebody left on the side, 9x17
+  function pint(x, y, glass, beer) {
+    var rows = fillCols(17, function () { return 9; });
+    rows[16] = 7;
+    stack(x, y, rows, fillCols(17, function (i) { return i < 3 || i > 14 ? glass : beer; }));
+  }
+
   /* ================================================================
      GAME MODULE — Bar Skittles (Devil Among the Tailors)
      Nine pins in a diamond. A ball on a chain hung from a post.
@@ -460,21 +481,24 @@ h2{
 
     create: function (api) {
       // --- the table, in world coordinates (flat top-down) ---
-      var POLE = { x: 120, y: 118 };      // the post, stood in the middle of the box
-      var L0 = 96;                        // chain at full length
-      var HANG = { x: 120, y: 214 };      // you hold the ball out at full stretch
-      var WIND = 2.55;                    // chain taken up by the post, per radian
-      var L_MIN = 14;                     // wound right down onto the post
-      var POST_R = 4;                     // the post is solid — you go round it
-      var DIA = { x: 120, y: 46 };        // centre of the pin diamond
-      var SPACING = 12;
-      var PIN_R = 4, BALL_R = 4;
-      var TABLE = { x0: 8, y0: -30, x1: 232, y1: 196 };
-      var YS = 0.55, YO = 24;             // 3/4 squash
-      var TOPPLE_R = 18;                  // how far a falling pin reaches
+      // World units are 2x the original 240x160 prototype; every length,
+      // speed and acceleration carries S so the feel is unchanged.
+      var S = 2;
+      var POLE = { x: 240, y: 236 };      // the post, stood in the middle of the box
+      var L0 = 96 * S;                    // chain at full length
+      var HANG = { x: 240, y: 428 };      // you hold the ball out at full stretch
+      var WIND = 2.55 * S;                // chain taken up by the post, per radian
+      var L_MIN = 14 * S;                 // wound right down onto the post
+      var POST_R = 4 * S;                 // the post is solid — you go round it
+      var DIA = { x: 240, y: 92 };        // centre of the pin diamond
+      var SPACING = 12 * S;
+      var PIN_R = 4 * S, BALL_R = 4 * S;
+      var TABLE = { x0: 16, y0: -60, x1: 464, y1: 392 };
+      var YS = 0.55, YO = 36;             // 3/4 squash
+      var TOPPLE_R = 18 * S;              // how far a falling pin reaches
       var TOPPLE_DECAY = 0.38;            // force a falling pin passes on
       var TOPPLE_MIN = 1.3;               // under this it falls, but takes nothing with it
-      var PIN_MIN_SPEED = 45;             // a ball slower than this won't fell a pin
+      var PIN_MIN_SPEED = 45 * S;         // a ball slower than this won't fell a pin
 
       // --- palette ---
       var C = {
@@ -544,7 +568,7 @@ h2{
       }
 
       function throwBall() {
-        var speed = 170 + power * 210;
+        var speed = (170 + power * 210) * S;
         ball.x = HANG.x;
         ball.y = HANG.y;
         ball.vx = Math.cos(aim) * speed;
@@ -666,7 +690,7 @@ h2{
           if (Math.hypot(px_, py_) < BALL_R + PIN_R) {
             var sp0 = Math.hypot(ball.vx, ball.vy);
             if (sp0 > PIN_MIN_SPEED) {
-              topple(pin, ball.x, ball.y, sp0 / 70);
+              topple(pin, ball.x, ball.y, sp0 / (70 * S));
               ball.vx *= 0.82; ball.vy *= 0.82;   // every pin costs the ball
             } else {
               ball.vx *= 0.5; ball.vy *= 0.5;     // too slow — it just dies against it
@@ -676,7 +700,7 @@ h2{
 
         // settle
         var sp = Math.hypot(ball.vx, ball.vy);
-        if (sp < 14 || t > 13) {
+        if (sp < 14 * S || t > 13) {
           settleT += dt;
           if (settleT > 0.45 && pending.length === 0) finishBall();
         } else settleT = 0;
@@ -709,38 +733,37 @@ h2{
         // table top
         var ty0 = sy(TABLE.y0), ty1 = sy(TABLE.y1);
         px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, ty1 - ty0, C.wood);
-        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, 2, C.woodHi);
-        px(TABLE.x0, ty1 - 3, TABLE.x1 - TABLE.x0, 3, C.woodLo);
-        px(TABLE.x0, ty1, TABLE.x1 - TABLE.x0, 2, C.edge);
-        px(TABLE.x0, ty0, 2, ty1 - ty0, C.woodLo);
-        px(TABLE.x1 - 2, ty0, 2, ty1 - ty0, C.woodLo);
+        px(TABLE.x0, ty0, TABLE.x1 - TABLE.x0, 3, C.woodHi);
+        px(TABLE.x0, ty1 - 5, TABLE.x1 - TABLE.x0, 5, C.woodLo);
+        px(TABLE.x0, ty1, TABLE.x1 - TABLE.x0, 3, C.edge);
+        px(TABLE.x0, ty0, 3, ty1 - ty0, C.woodLo);
+        px(TABLE.x1 - 3, ty0, 3, ty1 - ty0, C.woodLo);
         // a worn ring where the pins always stand
-        for (var a = 0; a < 28; a++) {
-          var an = a / 28 * Math.PI * 2;
-          px(DIA.x + Math.cos(an) * 30, sy(DIA.y + Math.sin(an) * 30), 1, 1, C.line);
+        for (var a = 0; a < 64; a++) {
+          var an = a / 64 * Math.PI * 2;
+          px(DIA.x + Math.cos(an) * 60, sy(DIA.y + Math.sin(an) * 60), 1, 1, C.line);
         }
 
         // the pint somebody left on the corner
-        stack(212, sy(162), [5, 5, 5, 5, 5, 5, 5, 5, 5],
-          [C.glass, C.glass, C.beer, C.beer, C.beer, C.beer, C.beer, C.beer, C.glass]);
+        pint(426, sy(324), C.glass, C.beer);
 
         // chain
         if (stage === 'throw' || stage === 'aim' || stage === 'power') {
           var bx = ball.x, by = ball.y;
-          var segs = Math.max(2, Math.round(Math.hypot(bx - POLE.x, by - POLE.y) / 4));
+          var segs = Math.max(2, Math.round(Math.hypot(bx - POLE.x, by - POLE.y) / 5));
           for (var s = 1; s < segs; s++) {
             var f = s / segs;
-            px(POLE.x + (bx - POLE.x) * f, sy(POLE.y + (by - POLE.y) * f) - 9, 1, 1, C.chain);
+            px(POLE.x + (bx - POLE.x) * f, sy(POLE.y + (by - POLE.y) * f) - 18, 1, 1, C.chain);
           }
         }
 
         // aim guide
         if (stage === 'aim') {
           var liveAim = AIM_A + (AIM_B - AIM_A) * tri(t, 1.9);
-          for (var r = 14; r <= 44; r += 10) {
-            px(HANG.x + Math.cos(liveAim) * r, sy(HANG.y + Math.sin(liveAim) * r), 2, 2, C.brass);
+          for (var r = 28; r <= 88; r += 20) {
+            px(HANG.x + Math.cos(liveAim) * r - 1, sy(HANG.y + Math.sin(liveAim) * r) - 1, 3, 3, C.brass);
           }
-          px(HANG.x + Math.cos(liveAim) * 52, sy(HANG.y + Math.sin(liveAim) * 52), 3, 3, C.ember);
+          px(HANG.x + Math.cos(liveAim) * 104 - 2, sy(HANG.y + Math.sin(liveAim) * 104) - 2, 5, 5, C.ember);
         }
 
         // shadows, then bodies, back to front
@@ -760,57 +783,68 @@ h2{
         if (stage === 'power') drawMeter();
       }
 
+      var PIN_ROWS = [3, 5, 7, 7, 7, 5, 5, 5, 5, 7, 9, 9, 11, 11, 13, 13, 13, 13, 13, 13, 13, 11, 11, 11, 9];
+      var PIN_COLS = fillCols(25, function (i) {
+        if (i === 6 || i === 7) return C.band;
+        if (i === 0 || i === 1) return C.pin;
+        return (i % 6 === 2 || i >= 22) ? C.pinLo : C.pin;
+      });
+
       function drawPin(p) {
         var x = Math.round(p.x), y = Math.round(sy(p.y));
         if (p.up) {
-          px(x - 3, y, 7, 1, C.shadow);
-          stack(x, y, [3, 3, 3, 5, 5, 5, 7, 7, 7, 7, 7, 7, 5],
-            [C.pin, C.pin, C.pinLo, C.pin, C.band, C.band, C.pin, C.pin, C.pin, C.pinLo, C.pin, C.pin, C.pinLo]);
+          px(x - 6, y, 13, 2, C.shadow);
+          // 13x25: head, red band at the neck, belly, foot
+          stack(x, y, PIN_ROWS, PIN_COLS);
         } else {
           // lying in the direction it was knocked
           var horiz = Math.abs(Math.cos(p.ang)) > 0.5;
           if (horiz) {
             var dir = Math.cos(p.ang) > 0 ? 1 : -1;
-            px(x - 5, y - 2, 11, 4, C.down);
-            px(x + dir * 3, y - 2, 2, 4, C.downLo);
-            px(x - dir * 1, y - 2, 2, 4, C.band);
+            px(x - 10, y - 4, 21, 9, C.down);
+            px(x - 10, y + 3, 21, 2, C.downLo);
+            px(x + dir * 6 - 2, y - 4, 5, 9, C.downLo);
+            px(x - dir * 1 - 1, y - 4, 3, 9, C.band);
           } else {
-            px(x - 2, y - 5, 5, 9, C.down);
-            px(x - 2, y + (Math.sin(p.ang) > 0 ? 2 : -5), 5, 3, C.downLo);
-            px(x - 2, y - 1, 5, 2, C.band);
+            px(x - 4, y - 10, 9, 17, C.down);
+            px(x + 3, y - 10, 2, 17, C.downLo);
+            px(x - 4, y + (Math.sin(p.ang) > 0 ? 2 : -10), 9, 5, C.downLo);
+            px(x - 4, y - 3, 9, 3, C.band);
           }
         }
       }
 
       function drawPole() {
         var x = Math.round(POLE.x), y = Math.round(sy(POLE.y));
-        px(x - 3, y, 7, 2, C.shadow);
-        stack(x, y, [3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5],
-          [C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo,
-           C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo, C.brass, C.brass, C.brassLo,
-           C.brass, C.brass, C.brassLo, C.brass, C.brassLo, C.brassLo, C.brassLo, C.brassLo]);
+        px(x - 6, y, 13, 3, C.shadow);
+        // 9x50: finial, shaft, foot
+        var rows = fillCols(50, function (i) { return i < 2 ? 5 : (i < 4 ? 9 : (i < 42 ? 5 : (i < 45 ? 7 : 9))); });
+        stack(x, y, rows, fillCols(50, function (i) { return i >= 42 ? C.brassLo : (i % 4 === 3 ? C.brassLo : C.brass); }));
       }
+
+      var BALL_ROWS = discRows(15);
+      var BALL_COLS = fillCols(15, function (i) { return i < 3 ? C.ballHi : C.ball; });
 
       function drawBall() {
         var x = Math.round(ball.x), y = Math.round(sy(ball.y));
-        px(x - 3, y, 7, 2, C.shadow);
-        stack(x, y - 2, [3, 5, 7, 7, 7, 5, 3],
-          [C.ballHi, C.ball, C.ball, C.ball, C.ball, C.ball, C.ball]);
+        px(x - 6, y, 13, 3, C.shadow);
+        // 15x15
+        stack(x, y - 3, BALL_ROWS, BALL_COLS);
         // a glint that rolls with it
-        px(x - 1 + Math.round(Math.cos(ball.spin)), y - 7 + Math.round(Math.sin(ball.spin)), 1, 1, C.ballHi);
+        px(x - 2 + Math.round(Math.cos(ball.spin) * 2), y - 14 + Math.round(Math.sin(ball.spin) * 2), 2, 2, C.ballHi);
       }
 
       function drawMeter() {
-        var x = 5, y0 = 30, h = 100;
-        px(x - 1, y0 - 1, 9, h + 2, C.meter);
+        var x = 10, y0 = 50, h = 170;
+        px(x - 2, y0 - 2, 16, h + 4, C.meter);
         var p = tri(t, 1.05);
         var fill = Math.round(h * p);
         for (var i = 0; i < fill; i++) {
           var f = i / h;
           var c = f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi);
-          px(x, y0 + h - i - 1, 7, 1, c);
+          px(x, y0 + h - i - 1, 12, 1, c);
         }
-        px(x, y0 + h - fill - 1, 7, 1, C.cream || '#f3e6cf');
+        px(x, y0 + h - fill - 2, 12, 2, '#f3e6cf');
       }
 
       /* ---- what the shell asks for ----------------------------- */
@@ -876,16 +910,16 @@ h2{
 
     create: function (api) {
       // --- the board, top-down, no squash: it is flat and you look straight down it ---
-      var BX0 = 84, BX1 = 156;            // playing surface, side edges (coins over these fall off)
-      var BY0 = 4, BY1 = 156;             // far end and near edge
-      var LINE0 = 14, PITCH = 13, BEDS = 9; // ten lines, 14..131; bed k sits between line k and k+1
-      var COIN_R = 4.5;                   // a 9px coin in a 12px bed: 1.5px either way
-      var LAUNCH = { x: 120, y: 146 };    // the coin overhangs the near edge, under your palm
-      var MU = 115;                       // sliding friction, px/s^2
+      var BX0 = 168, BX1 = 312;           // playing surface, side edges (coins over these fall off)
+      var BY0 = 8, BY1 = 262;             // far end and near edge
+      var LINE0 = 24, PITCH = 22, BEDS = 9; // ten lines, 24..222; bed k sits between line k and k+1
+      var COIN_R = 8.5;                   // a 17px coin in a 21px bed: 2px either way
+      var LAUNCH = { x: 240, y: 246 };    // the coin overhangs the near edge, under your palm
+      var MU = 195;                       // sliding friction, px/s^2
       var REST = 0.86;                    // coin on coin
       var TURNS = 3, COINS = 5;
       var SPREAD = 0.2;                   // aim sweeps +/- this many radians off straight
-      var SLIDE_MIN = 6, SLIDE_MAX = 160; // px a coin slides at empty and full meter
+      var SLIDE_MIN = 10, SLIDE_MAX = 272; // px a coin slides at empty and full meter
 
       var C = {
         floor: '#1b1109',
@@ -1039,37 +1073,36 @@ h2{
         px(0, 0, W, H, C.floor);
 
         // board
-        px(BX0 - 2, BY0 - 2, BX1 - BX0 + 4, BY1 - BY0 + 4, C.edge);
+        px(BX0 - 4, BY0 - 4, BX1 - BX0 + 8, BY1 - BY0 + 8, C.edge);
         px(BX0, BY0, BX1 - BX0, BY1 - BY0, C.wood);
-        px(BX0, BY0, BX1 - BX0, 1, C.woodHi);
-        px(BX0, BY0, 1, BY1 - BY0, C.woodLo);
-        px(BX1 - 1, BY0, 1, BY1 - BY0, C.woodLo);
+        px(BX0, BY0, BX1 - BX0, 2, C.woodHi);
+        px(BX0, BY0, 2, BY1 - BY0, C.woodLo);
+        px(BX1 - 2, BY0, 2, BY1 - BY0, C.woodLo);
         // grain
-        for (var gy = BY0 + 5; gy < BY1; gy += 9) px(BX0 + 3 + (gy * 7) % 11, gy, 18, 1, C.woodLo);
+        for (var gy = BY0 + 7; gy < BY1; gy += 13) px(BX0 + 6 + (gy * 7) % 23, gy, 36, 1, C.woodLo);
 
         // lines
         for (var i = 0; i <= BEDS; i++) px(BX0, lineY(i), BX1 - BX0, 1, C.line);
 
         // chalk boards either side: yours on the right, the bed number on the left
         for (var k = 0; k < BEDS; k++) {
-          var cy = lineY(k) + 2;
-          px(BX1 + 5, cy, 17, PITCH - 3, C.chalkBoard);
-          for (var m = 0; m < 3; m++) px(BX1 + 8 + m * 4, cy + 2, 1, PITCH - 7, m < chalk[k] ? C.chalk : C.chalkDim);
-          if (chalk[k] >= 3) px(BX1 + 6, cy + (PITCH - 3) / 2 - 1, 15, 1, C.chalk);
+          var cy = lineY(k) + 3;
+          px(BX1 + 10, cy, 32, PITCH - 5, C.chalkBoard);
+          for (var m = 0; m < 3; m++) px(BX1 + 16 + m * 8, cy + 3, 2, PITCH - 11, m < chalk[k] ? C.chalk : C.chalkDim);
+          if (chalk[k] >= 3) px(BX1 + 12, cy + Math.floor((PITCH - 5) / 2) - 1, 28, 2, C.chalk);
           // bed number as pips, 1 nearest you
           var n = BEDS - k;
-          for (var p = 0; p < n; p++) px(BX0 - 7 - (p % 3) * 2, cy + 1 + Math.floor(p / 3) * 3, 1, 1, C.lineLo);
+          for (var p = 0; p < n; p++) px(BX0 - 14 - (p % 3) * 4, cy + 2 + Math.floor(p / 3) * 5, 2, 2, C.lineLo);
         }
 
         // the pint, again
-        stack(212, 150, [5, 5, 5, 5, 5, 5, 5, 5, 5],
-          [C.glass, C.glass, C.beer, C.beer, C.beer, C.beer, C.beer, C.beer, C.glass]);
+        pint(424, 250, C.glass, C.beer);
 
         // aim guide
         if (stage === 'aim') {
           var a = liveAim();
-          for (var r = 12; r <= 42; r += 10) px(LAUNCH.x + Math.sin(a) * r - 1, LAUNCH.y - Math.cos(a) * r - 1, 2, 2, C.line);
-          px(LAUNCH.x + Math.sin(a) * 50 - 1, LAUNCH.y - Math.cos(a) * 50 - 1, 3, 3, C.meterHi);
+          for (var r = 20; r <= 74; r += 18) px(LAUNCH.x + Math.sin(a) * r - 1, LAUNCH.y - Math.cos(a) * r - 1, 3, 3, C.line);
+          px(LAUNCH.x + Math.sin(a) * 90 - 2, LAUNCH.y - Math.cos(a) * 90 - 2, 5, 5, C.meterHi);
         }
 
         for (var c = 0; c < coins.length; c++) drawCoin(coins[c]);
@@ -1078,27 +1111,28 @@ h2{
         if (stage === 'power') drawMeter();
       }
 
+      var COIN_ROWS = discRows(17);
+
       function drawCoin(c) {
         var x = Math.round(c.x), y = Math.round(c.y);
         var body = C.coin, hi = C.coinHi;
         if (c.mark === 'good') { body = C.good; hi = C.cream; }
         else if (c.mark === 'dead') { body = C.dead; hi = C.dead; }
-        px(x - 3, y + 4, 8, 1, C.shadow);
-        // 9x9 disc, base at y+5 so it is centred on the coin
-        stack(x, y + 5, [3, 7, 7, 9, 9, 9, 7, 7, 3],
-          [hi, hi, body, body, body, body, body, C.coinLo, C.coinLo]);
+        px(x - 7, y + 8, 16, 2, C.shadow);
+        // 17x17 disc, base at y+9 so it is centred on the coin
+        stack(x, y + 9, COIN_ROWS, fillCols(17, function (i) { return i < 4 ? hi : (i > 13 ? C.coinLo : body); }));
       }
 
       function drawMeter() {
-        var x = 5, y0 = 30, h = 100;
-        px(x - 1, y0 - 1, 9, h + 2, C.meter);
+        var x = 10, y0 = 50, h = 170;
+        px(x - 2, y0 - 2, 16, h + 4, C.meter);
         var p = tri(t, 1.0);
         var fill = Math.round(h * p);
         for (var i = 0; i < fill; i++) {
           var f = i / h;
-          px(x, y0 + h - i - 1, 7, 1, f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi));
+          px(x, y0 + h - i - 1, 12, 1, f < 0.45 ? C.meterLo : (f < 0.8 ? C.meterMid : C.meterHi));
         }
-        px(x, y0 + h - fill - 1, 7, 1, C.cream);
+        px(x, y0 + h - fill - 2, 12, 2, C.cream);
       }
 
       /* ---- what the shell asks for ----------------------------- */
