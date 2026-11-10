@@ -231,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and five games on it: Bar Skittles, Shove Ha'penny, Ring the Bull, Toad in the Hole and The Machine.</p>
+    <p class="tagline">All six games in the room: Bar Skittles, Shove Ha'penny, Ring the Bull, Toad in the Hole, The Machine and Dominoes.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -287,6 +287,7 @@ h2{
     <p>Ring the Bull is the one game in true 3D: a ring on a 1.6m string from the ceiling, swinging on a sphere, seen from behind your shoulder. The hook stands 6cm off the wall, so the ring has to reach it with the hole lined up, and arrive slowly enough to drop on rather than bang the wall and jump off. Held back and let go, a pendulum keeps to its line, so where you point it is where it meets the wall.</p>
     <p>Toad in the Hole is 3D as well: a brass disc pitched from eight feet at an 18-inch lead top, seen from where you stand. Lead is dead, so a toad stops near where it lands and only creeps; one that creeps over the hole slowly enough drops through. The table never moves, so it is ray-cast once, pixel by pixel, and kept. Pearl plays the finish: she knows going past 31 scratches the turn, and will take one point over two when one is all she needs.</p>
     <p>The Machine has no physics, so the skill is in its features: holds offered before a go, nudges after one, and a light running along the buttons that you press on. Dennis reads every hold by spinning the unheld reels a few hundred times on a copy, and every nudge by trying each way of spending them, then has to catch the light, which he is slow at. The reels pay about two thirds of their money back on their own; the holds and nudges are what make up the difference.</p>
+    <p>Dominoes is Fives and Threes with one button: a light runs through every legal play, shown where it would go and what it would score, and you press on the one you want. Albert counts each play he could make, then deals you sixty hands from the tiles he cannot see and finds your best reply to each, so he will pass up a point to avoid giving you four.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -2833,13 +2834,357 @@ h2{
     }
   });
 
-  /* ---- the rest of the room, waiting on their modules ---- */
-  [
-    { id: 'doms', name: 'Dominoes', sub: 'Fives and threes',
-      blurb: 'Play to a multiple of five or three and peg it. The old boy by the fire has not lost since 1987.' }
-  ].forEach(function (g) {
-    g.available = false; g.rival = '—';
-    register(g);
+  /* ================================================================
+     GAME MODULE — Dominoes (Fives and Threes)
+     Double-six set, seven each, the rest in the boneyard. Match an
+     end; if the two open ends then add up to a multiple of five or
+     three, score a point for every five and every three in it
+     (15 is eight). Can't go, draw. First out scores one; first to 31.
+     ================================================================ */
+
+  register({
+    id: 'doms',
+    name: 'Dominoes',
+    sub: 'Fives and threes',
+    blurb: 'Make the open ends add to a multiple of five or three and peg it. Against Albert by the fire, who has not lost since 1987. First to 31.',
+    rival: 'Albert',
+    available: true,
+
+    create: function (api) {
+      var W = api.W, H = api.H;
+      var GOAL = 31, DWELL = 0.8;
+      // Albert reads the table well. His error is in points, one standard deviation.
+      var AI = { name: 'Albert', err: 0.45, think: 1.3, guess: 60 };
+
+      var hands, bone, line, root, who, starter, scores, stage, t, opts, cursor, note, done, winner, plan, last, pauseT, hand;
+
+      function tri(a, b) { return [a, b]; }
+      function fullSet() { var s = []; for (var a = 0; a <= 6; a++) for (var b = a; b <= 6; b++) s.push(tri(a, b)); return s; }
+      function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var x = a[i]; a[i] = a[j]; a[j] = x; } return a; }
+
+      function init() {
+        scores = [0, 0]; done = false; winner = -1; note = ''; starter = 0; hand = 0;
+        deal();
+      }
+
+      function deal() {
+        var s = shuffle(fullSet());
+        hands = [s.slice(0, 7), s.slice(7, 14)];
+        bone = s.slice(14);
+        line = []; root = 0; last = null; passes = 0;
+        who = starter; hand++;
+        startTurn();
+      }
+
+      /* ---- the rules ------------------------------------------- */
+      function isDouble(t) { return t[0] === t[1]; }
+      function leftEnd(l) { return l[0].a; }
+      function rightEnd(l) { return l[l.length - 1].b; }
+
+      // the count of the open ends: a double laid crossways at an end counts both halves
+      function endsSum(l) {
+        if (!l.length) return 0;
+        if (l.length === 1) return l[0].a + l[0].b;
+        var L = l[0], R = l[l.length - 1];
+        return L.a * (L.a === L.b ? 2 : 1) + R.b * (R.a === R.b ? 2 : 1);
+      }
+      function fivesThrees(s) {
+        if (!s) return 0;
+        return (s % 5 === 0 ? s / 5 : 0) + (s % 3 === 0 ? s / 3 : 0);
+      }
+
+      // every legal play from a hand: {i: tile index, end: 'L' | 'R' | 'C'}
+      function legal(h, l) {
+        var out = [];
+        for (var i = 0; i < h.length; i++) {
+          var t = h[i];
+          if (!l.length) { out.push({ i: i, end: 'C' }); continue; }
+          var L = leftEnd(l), R = rightEnd(l);
+          var okL = t[0] === L || t[1] === L, okR = t[0] === R || t[1] === R;
+          if (okL) out.push({ i: i, end: 'L' });
+          // the same tile on an identical end would make the same table: offer it once
+          if (okR && !(okL && L === R && l.length === 1)) out.push({ i: i, end: 'R' });
+        }
+        return out;
+      }
+
+      // lay tile t on line l (in place); returns where the root moved to
+      function lay(l, t, end, r) {
+        if (end === 'C') { l.push({ a: t[0], b: t[1] }); return 0; }
+        if (end === 'L') { var L = leftEnd(l); l.unshift(t[1] === L ? { a: t[0], b: t[1] } : { a: t[1], b: t[0] }); return r + 1; }
+        var R = rightEnd(l); l.push(t[0] === R ? { a: t[0], b: t[1] } : { a: t[1], b: t[0] });
+        return r;
+      }
+
+      function pips(h) { var n = 0; for (var i = 0; i < h.length; i++) n += h[i][0] + h[i][1]; return n; }
+
+      /* ---- the flow -------------------------------------------- */
+      function startTurn() {
+        t = 0; cursor = 0; plan = null;
+        opts = legal(hands[who], line);
+        stage = opts.length ? 'choose' : (bone.length ? 'draw' : 'pass');
+      }
+
+      function play(o) {
+        var tile = hands[who].splice(o.i, 1)[0];
+        passes = 0;
+        root = lay(line, tile, o.end, root);
+        var p = fivesThrees(endsSum(line));
+        scores[who] += p;
+        last = { who: who, tile: tile, p: p, at: line.indexOf(o.end === 'L' ? line[0] : line[line.length - 1]) };
+        var name = who === 0 ? 'You' : AI.name;
+        note = p ? name + (who === 0 ? ' make ' : ' makes ') + endsSum(line) + ': ' + p + (p === 1 ? ' point' : ' points') :
+                   name + (who === 0 ? ' play ' : ' plays ') + tile[0] + '-' + tile[1];
+        if (scores[who] >= GOAL) return finish(who);
+        if (!hands[who].length) {
+          scores[who] += 1;
+          note = name + (who === 0 ? ' go out' : ' goes out') + (p ? ' with ' + p + (p === 1 ? ' point' : ' points') : '') + ', and take one for it';
+          if (scores[who] >= GOAL) return finish(who);
+          stage = 'between'; pauseT = 2.2; return;
+        }
+        stage = 'pause'; pauseT = 0.9;
+      }
+
+      function finish(w) { winner = w; stage = 'between'; pauseT = 2; done = 'soon'; }
+
+      function draw() {
+        hands[who].push(bone.pop());
+        note = (who === 0 ? 'You draw' : AI.name + ' draws') + ' from the boneyard';
+        startTurn();
+        if (stage === 'choose') t = -0.3;
+      }
+
+      // nobody can go and the boneyard is empty: the lighter hand takes one
+      function blocked() {
+        var a = pips(hands[0]), b = pips(hands[1]);
+        if (a !== b) { var w = a < b ? 0 : 1; scores[w] += 1; note = 'Blocked. ' + (w === 0 ? 'Your hand is lighter: one to you' : AI.name + '\'s hand is lighter: one to him'); if (scores[w] >= GOAL) return finish(w); }
+        else note = 'Blocked, and level on spots';
+        stage = 'between'; pauseT = 2.2;
+      }
+
+      // knocks in a row: two and the game is blocked
+      var passes = 0;
+      function next() { who = 1 - who; startTurn(); }
+      function knock() {
+        passes++;
+        if (passes >= 2) { passes = 0; blocked(); return; }
+        note = (who === 0 ? 'You knock' : AI.name + ' knocks') + ': nothing to go';
+        stage = 'pause'; pauseT = 1.1;
+      }
+
+      function update(dt) {
+        t += dt;
+        if (stage === 'pass') { knock(); return; }
+        if (stage === 'pause') { pauseT -= dt; if (pauseT <= 0) next(); return; }
+        if (stage === 'between') {
+          pauseT -= dt;
+          if (pauseT <= 0) {
+            if (done === 'soon') { done = true; stage = 'over'; return; }
+            starter = 1 - starter; deal();
+          }
+          return;
+        }
+        if (stage === 'choose' && t >= 0) cursor = Math.floor(t / DWELL) % opts.length;
+        if (who === 1 && done !== true) aiTick();
+      }
+
+      function press() {
+        if (who !== 0 || done === true) return;
+        if (stage === 'choose' && t >= 0) play(opts[cursor]);
+        else if (stage === 'draw') draw();
+      }
+
+      /* ---- Albert ---------------------------------------------- */
+      // For each play he could make he counts what it scores, then deals
+      // you sixty hands from the tiles he cannot see and finds your best
+      // reply to each. What you are likely to score back counts against it.
+      // He would rather be rid of heavy tiles, in case it blocks.
+      function choose() {
+        var h = hands[1], seen = {}, i, k;
+        for (i = 0; i < h.length; i++) seen[h[i][0] + '-' + h[i][1]] = 1;
+        for (i = 0; i < line.length; i++) { var x = Math.min(line[i].a, line[i].b), y = Math.max(line[i].a, line[i].b); seen[x + '-' + y] = 1; }
+        var pool = fullSet().filter(function (t) { return !seen[t[0] + '-' + t[1]]; });
+        var best = null;
+        for (k = 0; k < opts.length; k++) {
+          var o = opts[k], l = line.map(function (q) { return { a: q.a, b: q.b }; });
+          var tile = h[o.i];
+          lay(l, tile, o.end, root);
+          var mine = fivesThrees(endsSum(l));
+          if (scores[1] + mine >= GOAL) mine += 100;          // that wins it
+          var back = 0;
+          for (var s = 0; s < AI.guess; s++) {
+            var yours = shuffle(pool.slice()).slice(0, hands[0].length), top = 0;
+            var lo = legal(yours, l);
+            for (var m = 0; m < lo.length; m++) {
+              var l2 = l.map(function (q) { return { a: q.a, b: q.b }; });
+              lay(l2, yours[lo[m].i], lo[m].end, 0);
+              top = Math.max(top, fivesThrees(endsSum(l2)));
+            }
+            back += top;
+          }
+          var v = mine - 0.75 * back / AI.guess + 0.06 * (tile[0] + tile[1]) + (h.length === 1 ? 1 : 0) + gauss() * AI.err;
+          if (!best || v > best.v) best = { k: k, v: v };
+        }
+        return best.k;
+      }
+
+      function aiTick() {
+        if (stage === 'draw') { if (t > 0.7) draw(); return; }
+        if (stage !== 'choose' || t < 0) return;
+        if (plan === null) plan = choose();
+        // he waits for the light to come round to the play he wants
+        if (t > AI.think && cursor === plan && (t % DWELL) > DWELL * 0.3) play(opts[plan]);
+      }
+
+      /* ---- render ---------------------------------------------- */
+      var C = {
+        ivory: '#efe6d2', ivoryHi: '#fbf6ea', ivoryLo: '#b9ab8a', pip: '#1b1309', back: '#2b1a10', backHi: '#4a2d17',
+        felt: '#1f3b2c', feltHi: '#2a4b38', feltLo: '#152a1f', brass: '#d9a63c', cream: '#f3e6cf', ember: '#c4502a', shadow: 'rgba(0,0,0,.35)'
+      };
+      var PIPS = [[], [[1, 1]], [[0, 0], [2, 2]], [[0, 0], [1, 1], [2, 2]], [[0, 0], [2, 0], [0, 2], [2, 2]],
+                  [[0, 0], [2, 0], [1, 1], [0, 2], [2, 2]], [[0, 0], [0, 1], [0, 2], [2, 0], [2, 1], [2, 2]]];
+
+      // one half of a tile: an s x s square with its spots
+      function half(x, y, s, n, rot) {
+        var step = s >= 14 ? 4 : 3, off = Math.round((s - 2 * step - 2) / 2), d = s >= 14 ? 2 : 2;
+        for (var i = 0; i < PIPS[n].length; i++) {
+          var p = PIPS[n][i], c = rot ? [p[1], p[0]] : p;
+          px(x + off + c[0] * step, y + off + c[1] * step, d, d, C.pip);
+        }
+      }
+      // a tile, face up: horizontal (2s x s) or upright (s x 2s), v1 first
+      function tile(x, y, s, v1, v2, upright, glow) {
+        var w = upright ? s : 2 * s, h = upright ? 2 * s : s;
+        px(x + 1, y + 2, w, h, C.shadow);
+        px(x, y, w, h, glow ? '#fff1c4' : C.ivory);
+        px(x, y, w, 1, C.ivoryHi); px(x, y + h - 1, w, 1, C.ivoryLo); px(x + w - 1, y, 1, h, C.ivoryLo);
+        if (upright) { px(x + 2, y + s, s - 4, 1, C.ivoryLo); half(x, y, s, v1, true); half(x, y + s, s, v2, true); }
+        else { px(x + s, y + 2, 1, s - 4, C.ivoryLo); half(x, y, s, v1); half(x + s, y, s, v2); }
+        if (glow) { px(x - 1, y - 1, w + 2, 1, C.brass); px(x - 1, y + h, w + 2, 1, C.brass); px(x - 1, y, 1, h, C.brass); px(x + w, y, 1, h, C.brass); }
+      }
+      function tileBack(x, y, w, h) {
+        px(x + 1, y + 2, w, h, C.shadow);
+        px(x, y, w, h, C.back); px(x, y, w, 1, C.backHi); px(x + 1, y + (h >> 1), w - 2, 1, '#1a0f08');
+      }
+
+      // the snake of play: the first tile in the middle, each arm runs out
+      // to the edge of the board and turns back on the row beyond it
+      var S = 12, ROW = 28, YC = 122, X0 = 28, X1 = 452;
+      function layout(l, r) {
+        var out = new Array(l.length);
+        if (!l.length) return out;
+        var rt = l[r], rw = rt.a === rt.b ? S : 2 * S;
+        out[r] = { x: 240 - (rw >> 1), y: YC - (rt.a === rt.b ? S >> 1 : 0), up: rt.a === rt.b, v1: rt.a, v2: rt.b };
+        [1, -1].forEach(function (arm) {
+          var row = 0, go = arm, edge = arm > 0 ? 240 + (rw >> 1) + 1 : 240 - (rw >> 1) - 1;
+          for (var i = r + arm; i >= 0 && i < l.length; i += arm) {
+            var q = l[i], dbl = q.a === q.b, w = dbl ? S : 2 * S;
+            if ((go > 0 && edge + w > X1) || (go < 0 && edge - w < X0)) {
+              row++; go = -go; edge = go > 0 ? X0 : X1;
+            }
+            var x = go > 0 ? edge : edge - w, y = YC + arm * row * ROW;
+            var near = arm > 0 ? q.a : q.b, far = arm > 0 ? q.b : q.a;  // the half that touches the last tile, and the other
+            var v1 = go > 0 ? near : far, v2 = go > 0 ? far : near;
+            out[i] = { x: x, y: dbl ? y - (S >> 1) : y, up: dbl, v1: dbl ? q.a : v1, v2: dbl ? q.a : v2 };
+            edge = go > 0 ? edge + w + 1 : edge - w - 1;
+          }
+        });
+        return out;
+      }
+
+      function render(g) {
+        api.backdrop(0.5);
+        // the table: green baize in a wooden frame
+        px(10, 28, 460, 202, '#2a180b');
+        px(12, 30, 456, 198, '#5c3a1e');
+        px(12, 30, 456, 1, '#8d5e33'); px(12, 227, 456, 1, '#35200f');
+        px(20, 38, 440, 182, C.felt);
+        for (var fy = 38; fy < 220; fy += 2) for (var fx = 20 + (fy % 4); fx < 460; fx += 4) px(fx, fy, 1, 1, C.feltLo);
+        px(20, 38, 440, 2, 'rgba(0,0,0,.35)'); px(20, 38, 2, 182, 'rgba(0,0,0,.25)');
+
+        // Albert's hand, face down along the top
+        var n1 = hands[1].length;
+        for (var i = 0; i < n1; i++) tileBack(240 - n1 * 7 + i * 14, 6, 12, 18);
+        // the boneyard
+        for (var b = 0; b < bone.length; b++) tileBack(404 + (b % 7) * 7, 4 + Math.floor(b / 7) * 9, 6, 8);
+
+        // the line, and the play the light is on, shown where it would go
+        var pos = layout(line, root);
+        for (var k = 0; k < line.length; k++) {
+          var p = pos[k], fresh = last && k === last.at && (who !== last.who || stage !== 'choose') && t < 1.5;
+          tile(p.x, p.y, S, p.v1, p.v2, p.up, fresh);
+        }
+        var o = stage === 'choose' && t >= 0 && who === 0 ? opts[cursor] : null;
+        if (o) {
+          var l2 = line.map(function (q) { return { a: q.a, b: q.b }; });
+          var r2 = lay(l2, hands[0][o.i], o.end, root), pos2 = layout(l2, r2), at = o.end === 'L' ? 0 : l2.length - 1;
+          var q = pos2[at];
+          ctx.globalAlpha = 0.75;
+          tile(q.x, q.y, S, q.v1, q.v2, q.up, true);
+          ctx.globalAlpha = 1;
+        }
+
+        // your hand, face up along the bottom
+        var h = hands[0], hw = 18, n0 = h.length, x0 = 240 - (n0 * hw) / 2;
+        for (var j = 0; j < n0; j++) {
+          var lit = o && o.i === j;
+          tile(Math.round(x0 + j * hw), lit ? 234 : 238, 14, h[j][0], h[j][1], true, lit);
+        }
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        function side(i, label) {
+          return '<span' + (who === i ? ' class="rival"' : '') + '>' + label + ' <b>' + scores[i] + '</b></span>';
+        }
+        return '<span>HAND <b>' + hand + '</b></span>' + side(0, 'YOU') + side(1, 'ALBERT') +
+               '<span>ENDS <b>' + endsSum(line) + '</b></span><span>BONEYARD <b>' + bone.length + '</b></span>' +
+               '<span>FIRST TO <b>' + GOAL + '</b></span>';
+      }
+
+      function prompt() {
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (stage === 'between' || stage === 'pause' || stage === 'over') return '&nbsp;<br>' + sub;
+        if (who === 1) return 'Albert\'s go.<br>' + (sub || '<span>He turns a tile over in his fingers</span>');
+        if (stage === 'draw') return 'Nothing to go. Draw from the boneyard.<br>' + sub;
+        if (stage === 'choose' && t >= 0) {
+          var o = opts[cursor], l2 = line.map(function (q) { return { a: q.a, b: q.b }; });
+          lay(l2, hands[0][o.i], o.end, root);
+          var s = endsSum(l2), p = fivesThrees(s);
+          return 'Your go. Press when the light is on the play you want.<br><span>' +
+                 (o.end === 'C' ? 'Lead with it' : 'On the ' + (o.end === 'L' ? 'left' : 'right')) + ': ends make ' + s +
+                 (p ? ', for ' + p + (p === 1 ? ' point' : ' points') : '') + '</span>';
+        }
+        return 'Your go.<br>' + sub;
+      }
+
+      function action() {
+        if (who === 1) return 'Albert is up';
+        if (stage === 'choose') return 'Play it';
+        if (stage === 'draw') return 'Draw';
+        return '...';
+      }
+
+      function settled() { return done === true; }
+
+      function result() {
+        var a = scores[0], b = scores[1], v;
+        if (winner === 0 && b < 20) v = 'Albert looks at the board a long time. <b>Then he says 1987 was a good year and buys you a drink.</b>';
+        else if (winner === 0) v = 'You peg out first. <b>Albert says you were lucky with the double five, and he is right.</b>';
+        else if (a >= 24) v = 'Albert pegs out with you in sight. <b>He says you will make a player yet.</b>';
+        else v = 'Albert pegs out <b>and starts shuffling for the next one without asking.</b>';
+        return {
+          score: a, rivalScore: b,
+          title: winner === 0 ? 'You beat Albert' : 'Albert wins again',
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
   });
 
   /* ---- boot ---- */
