@@ -231,7 +231,7 @@ h2{
       <h1>Last Orders</h1>
       <div class="est">PUB GAMES &middot; PROTOTYPE</div>
     </div>
-    <p class="tagline">The shell, and four games on it: Bar Skittles, Shove Ha'penny, Ring the Bull and Toad in the Hole.</p>
+    <p class="tagline">The shell, and five games on it: Bar Skittles, Shove Ha'penny, Ring the Bull, Toad in the Hole and The Machine.</p>
   </header>
 
   <!-- ===== Playfield ===== -->
@@ -280,11 +280,13 @@ h2{
       <span class="spec">ROOM <b>480&times;270</b></span>
       <span class="spec">COIN <b>16&times;16</b></span>
       <span class="spec">BULL WALL <b>480&times;270</b></span>
+      <span class="spec">REEL SYMBOL <b>32&times;32</b></span>
     </div>
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
     <p>Ring the Bull is the one game in true 3D: a ring on a 1.6m string from the ceiling, swinging on a sphere, seen from behind your shoulder. The hook stands 6cm off the wall, so the ring has to reach it with the hole lined up, and arrive slowly enough to drop on rather than bang the wall and jump off. Held back and let go, a pendulum keeps to its line, so where you point it is where it meets the wall.</p>
     <p>Toad in the Hole is 3D as well: a brass disc pitched from eight feet at an 18-inch lead top, seen from where you stand. Lead is dead, so a toad stops near where it lands and only creeps; one that creeps over the hole slowly enough drops through. The table never moves, so it is ray-cast once, pixel by pixel, and kept. Pearl plays the finish: she knows going past 31 scratches the turn, and will take one point over two when one is all she needs.</p>
+    <p>The Machine has no physics, so the skill is in its features: holds offered before a go, nudges after one, and a light running along the buttons that you press on. Dennis reads every hold by spinning the unheld reels a few hundred times on a copy, and every nudge by trying each way of spending them, then has to catch the light, which he is slow at. The reels pay about two thirds of their money back on their own; the holds and nudges are what make up the difference.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -320,7 +322,7 @@ h2{
   }
   ['room/backdrop.png', 'room/pint.png', 'skittles/pin.png', 'skittles/ball.png',
    'skittles/post.png', 'skittles/wood.png', 'shove/coin.png', 'shove/board.png',
-   'shove/slate.png', 'ring/wall.png', 'ring/hook.png'].forEach(art);
+   'shove/slate.png', 'ring/wall.png', 'ring/hook.png'].concat(['cherry', 'lemon', 'orange', 'plum', 'melon', 'bell', 'bar', 'seven'].map(function (n) { return 'fruit/' + n + '.png'; })).forEach(art);
 
   /* ---- the room behind every game: the shell's own layer, drawn
      first and knocked back so whatever is on the table reads first. */
@@ -2427,10 +2429,412 @@ h2{
     }
   });
 
+  /* ================================================================
+     GAME MODULE — The Machine
+     A three-reel fruit machine in the corner. Ten pence a go, turn
+     about with Dennis, ten goes each from a pound. Sometimes it
+     offers holds before a spin, sometimes nudges after one; a light
+     runs along the buttons and you press when it is on the one you
+     want. Whoever has more money at the end has won, for tonight.
+     ================================================================ */
+
+  register({
+    id: 'fruit',
+    name: 'The Machine',
+    sub: 'Nudge, hold, repent',
+    blurb: 'The cabinet in the corner. Ten goes each with Dennis from a pound: take the holds, use the nudges, and finish with more than he does.',
+    rival: 'Dennis',
+    available: true,
+
+    create: function (api) {
+      var W = api.W, H = api.H;
+      // symbols, cheapest first
+      var NAMES = ['cherry', 'lemon', 'orange', 'plum', 'melon', 'bell', 'bar', 'seven'];
+      var PAY3 = [80, 100, 120, 150, 200, 300, 500, 1000];   // pence for three on the line
+      var CH = 0, LE = 1, OR = 2, PL = 3, ME = 4, BE = 5, BA = 6, SE = 7;
+      var STRIPS = [
+        [CH, LE, OR, PL, CH, ME, LE, BE, OR, CH, PL, BA, LE, OR, CH, SE],
+        [LE, CH, OR, BE, PL, LE, ME, CH, OR, BA, LE, PL, SE, OR, CH, BE],
+        [OR, LE, PL, CH, BE, OR, LE, ME, PL, BA, OR, LE, SE, PL, CH, OR]
+      ];
+      var N = 16, STAKE = 10, START = 100, GOES = 10;
+      var DWELL = 0.55;                   // seconds the light sits on each button
+      var HOLD_CHANCE = 0.33, NUDGE_CHANCE = 0.28;
+
+      // Dennis has a system. He reads the reels well and is slow on the button.
+      var AI = { name: 'Dennis', think: 0.9, react: 0.16, sims: 400 };
+
+      var reels, players, who, goes, stage, t, phase, cursor, held, nudges, lastWin, note, done, winner, plan, flash, offered;
+
+      function sym(r, i) { return STRIPS[r][((i % N) + N) % N]; }
+      function lineOf(pos) { return [sym(0, pos[0]), sym(1, pos[1]), sym(2, pos[2])]; }
+
+      // what the win line pays, in pence
+      function pay(l) {
+        if (l[0] === l[1] && l[1] === l[2]) return PAY3[l[0]];
+        if (l[0] === CH && l[1] === CH) return 30;
+        if (l[0] === CH) return 10;
+        return 0;
+      }
+
+      function init() {
+        reels = [0, 1, 2].map(function (r) { var p = Math.floor(Math.random() * N); return { pos: p, at: p, spin: false, stopAt: 0, from: p }; });
+        players = [{ name: 'You', cash: START, goes: 0 }, { name: AI.name, cash: START, goes: 0 }];
+        who = 0; done = false; winner = -1; note = ''; lastWin = true; flash = 0;
+        startGo();
+      }
+
+      function stops() { return [reels[0].at, reels[1].at, reels[2].at]; }
+
+      // a go: pay your ten pence; perhaps the machine offers holds first
+      function startGo() {
+        held = [false, false, false]; plan = null; nudges = 0; t = 0; cursor = 0;
+        offered = !lastWin && Math.random() < HOLD_CHANCE;
+        stage = offered ? 'hold' : 'ready';
+      }
+
+      function spin() {
+        var p = players[who];
+        p.cash -= STAKE; p.goes++;
+        for (var r = 0; r < 3; r++) {
+          var R = reels[r];
+          if (held[r]) continue;
+          R.spin = true; R.from = R.pos;
+          R.at = Math.floor(Math.random() * N);
+          R.stopAt = 0.7 + 0.45 * r;
+        }
+        note = ''; stage = 'spin'; t = 0;
+      }
+
+      function update(dt) {
+        t += dt;
+        if (flash > 0) flash -= dt;
+        // the reels: spin, then drop to their stops in turn; nudges ease in
+        for (var r = 0; r < 3; r++) {
+          var R = reels[r];
+          if (R.spin) {
+            R.pos -= 14 * dt;
+            if (t >= R.stopAt) { R.spin = false; R.pos = R.at + 0.35; }
+          } else if (R.pos !== R.at) {
+            var d = R.at - R.pos, step = Math.sign(d) * Math.min(Math.abs(d), 6 * dt);
+            R.pos += step;
+            if (Math.abs(R.at - R.pos) < 1e-3) R.pos = R.at;
+          }
+        }
+        if (stage === 'spin') {
+          if (!reels[0].spin && !reels[1].spin && !reels[2].spin && settledReels()) afterSpin();
+        } else if (stage === 'nudge' && settledReels() && nudges === 0) {
+          settle();
+        } else if (stage === 'pay') {
+          if (t > 1.5) endGo();
+        }
+        if ((stage === 'hold' || stage === 'nudge') && t > 0) cursor = Math.floor(t / DWELL) % 4;
+        if (who === 1 && !done) aiTick();
+      }
+
+      function settledReels() { for (var r = 0; r < 3; r++) if (reels[r].spin || reels[r].pos !== reels[r].at) return false; return true; }
+
+      function afterSpin() {
+        var won = pay(lineOf(stops()));
+        if (!won && Math.random() < NUDGE_CHANCE) {
+          var u = Math.random();
+          nudges = u < 0.4 ? 1 : (u < 0.7 ? 2 : (u < 0.9 ? 3 : 4));
+          stage = 'nudge'; t = 0; plan = null;
+          return;
+        }
+        settle();
+      }
+
+      // pay what is on the line
+      function settle() {
+        var won = pay(lineOf(stops()));
+        players[who].cash += won;
+        lastWin = won > 0;
+        var name = who === 0 ? 'You' : AI.name;
+        if (won) { flash = 1.2; note = name + (who === 0 ? ' win ' : ' wins ') + money(won); }
+        else note = who === 0 ? 'Nothing' : AI.name + ' gets nothing';
+        stage = 'pay'; t = 0;
+      }
+
+      function endGo() {
+        // turn about; anyone who has had ten goes, or cannot find ten
+        // pence for another, sits out, and when both are out it is over
+        function can(i) { return players[i].goes < GOES && players[i].cash >= STAKE; }
+        var next = can(1 - who) ? 1 - who : (can(who) ? who : -1);
+        if (next < 0) {
+          var a = players[0].cash, b = players[1].cash;
+          done = true; stage = 'over'; winner = a > b ? 0 : (b > a ? 1 : -1);
+          return;
+        }
+        who = next;
+        startGo();
+      }
+
+      function money(p) { return p >= 100 ? '£' + (p / 100).toFixed(2) : p + 'p'; }
+
+      // one button: what it does depends on where the light is
+      function act() {
+        if (stage === 'ready') { spin(); return; }
+        if (stage === 'hold') {
+          if (cursor === 3) spin();
+          else held[cursor] = !held[cursor];
+          return;
+        }
+        if (stage === 'nudge' && nudges > 0 && settledReels()) {
+          if (cursor === 3) { nudges = 0; return; }
+          reels[cursor].at -= 1;          // the symbol above drops onto the line
+          reels[cursor].at = ((reels[cursor].at % N) + N) % N;
+          reels[cursor].pos = reels[cursor].at + 1;
+          nudges--;
+        }
+      }
+
+      function press() { if (who === 0 && !done) act(); }
+
+      /* ---- Dennis ---------------------------------------------- */
+      // Holds: he tries every set of holds on copies of the next spin and
+      // keeps the one that pays best on average. Nudges: he tries every way
+      // of spending them and takes the best line. Then he has to hit the
+      // button while the light is on the right one, and he is not quick.
+      function bestHolds() {
+        var best = { h: [false, false, false], v: -1 }, now = stops();
+        for (var m = 0; m < 8; m++) {
+          var h = [!!(m & 1), !!(m & 2), !!(m & 4)], tot = 0;
+          for (var s = 0; s < AI.sims; s++) {
+            var p = [h[0] ? now[0] : Math.floor(Math.random() * N), h[1] ? now[1] : Math.floor(Math.random() * N), h[2] ? now[2] : Math.floor(Math.random() * N)];
+            tot += pay(lineOf(p));
+          }
+          var v = tot / AI.sims;
+          if (v > best.v + 0.5) best = { h: h, v: v };
+        }
+        return best.h;
+      }
+      function bestNudges(n) {
+        var now = stops(), best = { k: [0, 0, 0], v: pay(lineOf(now)) };
+        for (var a = 0; a <= n; a++) for (var b = 0; a + b <= n; b++) for (var c = 0; a + b + c <= n; c++) {
+          var v = pay(lineOf([now[0] - a, now[1] - b, now[2] - c]));
+          if (v > best.v) best = { k: [a, b, c], v: v };
+        }
+        return best.k;
+      }
+
+      // the reel he means to press next, or 3 for spin / done
+      function wantNext() {
+        if (stage === 'hold') { for (var r = 0; r < 3; r++) if (plan.h[r] !== held[r]) return r; return 3; }
+        for (var q = 0; q < 3; q++) if (plan.k[q] > 0) return q;
+        return 3;
+      }
+
+      function aiTick() {
+        if (stage === 'ready') { if (t > AI.think) spin(); return; }
+        if (stage !== 'hold' && stage !== 'nudge') return;
+        if (stage === 'nudge' && (!settledReels() || nudges === 0)) return;
+        if (!plan) {
+          plan = stage === 'hold' ? { h: bestHolds() } : { k: bestNudges(nudges) };
+          plan.aimT = null;
+        }
+        if (t < AI.think) return;
+        // he decides to press when the light is on the button he wants,
+        // and his hand gets there a moment later
+        if (plan.aimT === null) {
+          var target = wantNext();
+          var tt = t;
+          while (Math.floor(tt / DWELL) % 4 !== target) tt += DWELL;
+          plan.target = target;
+          plan.aimT = tt + DWELL * 0.25 + Math.abs(gauss()) * AI.react;
+        }
+        if (t >= plan.aimT) {
+          var hit = cursor;
+          if (stage === 'nudge' && hit < 3 && hit === plan.target) plan.k[hit]--;
+          else if (stage === 'nudge' && hit < 3) plan = null;          // a slip: think again with what is left
+          act();
+          if (plan) plan.aimT = null;
+          if (stage === 'hold' && hit !== plan.target) plan = null;   // undo next time round
+        }
+      }
+
+      /* ---- render ---------------------------------------------- */
+      var CELL = 34, RW = 52, RX = [158, 214, 270], RY = 126;   // reel columns and the win line
+      var C = {
+        cab: '#2a0f12', cabHi: '#5a1d22', cabLo: '#16070a', chrome: '#c9cfd4', chromeLo: '#6f777d',
+        glass: '#f3ead6', glassLo: '#c9bca0', ink: '#1b1309', lamp: '#ffd36a', lampOff: '#5a4319',
+        red: '#d8402f', green: '#7fd16a', cream: '#f3e6cf', dim: '#7d6a55'
+      };
+      var SYMC = ['#d8302f', '#f0d23a', '#f08a26', '#8a3fb8', '#4fae4a', '#e8b23a', '#222', '#d8302f'];
+
+      function render(g) {
+        api.backdrop(0.55);
+        // the cabinet
+        px(118, 4, 244, 266, C.cabLo);
+        px(122, 4, 236, 266, C.cab);
+        px(122, 4, 236, 2, C.cabHi);
+        px(118, 4, 2, 266, C.chromeLo); px(360, 4, 2, 266, C.chromeLo);
+        // the top: its name in lights
+        px(132, 12, 216, 40, '#120406');
+        for (var i = 0; i < 18; i++) {
+          var on = ((Math.floor(t * 6) + i) % 3 === 0) || flash > 0;
+          px(136 + i * 12, 15, 4, 3, on ? C.lamp : C.lampOff);
+          px(136 + i * 12, 46, 4, 3, on ? C.lampOff : C.lamp);
+        }
+        title(240, 24, 'THE MACHINE');
+
+        // the reel window
+        px(150, RY - CELL * 1.5 - 8, 180, CELL * 3 + 16, C.chrome);
+        px(152, RY - CELL * 1.5 - 6, 176, CELL * 3 + 12, C.chromeLo);
+        for (var r = 0; r < 3; r++) drawReel(r);
+        // the win line
+        px(150, RY - 1, 6, 2, C.red); px(324, RY - 1, 6, 2, C.red);
+        px(156, RY, 168, 1, 'rgba(216,64,47,.6)');
+
+        // holds and nudges: four lit buttons and the running light
+        var live = stage === 'hold' || (stage === 'nudge' && nudges > 0);
+        for (var b = 0; b < 4; b++) {
+          var bx = b < 3 ? RX[b] + 4 : 196, bw = b < 3 ? 44 : 88, by = b < 3 ? 190 : 208;
+          var lit = live && cursor === b;
+          var label = b < 3 ? (stage === 'nudge' ? 'NUDGE' : 'HOLD') : (stage === 'nudge' ? 'DONE' : 'SPIN');
+          if (b === 3 && stage !== 'hold' && stage !== 'nudge') label = 'START';
+          var on = b < 3 ? (stage === 'hold' && held[b]) : stage === 'ready';
+          px(bx - 1, by - 1, bw + 2, 16, '#0b0405');
+          px(bx, by, bw, 14, lit ? C.lamp : (on ? '#c98a28' : '#3a1a12'));
+          small(bx + bw / 2, by + 4, label, lit || on ? C.ink : C.dim);
+        }
+        // feature lamps
+        lamp(134, 210, 'HOLD', stage === 'hold');
+        lamp(294, 210, 'NUDGE', stage === 'nudge');
+        for (var n = 0; n < 4; n++) px(296 + n * 13, 224, 9, 5, stage === 'nudge' && n < nudges ? C.lamp : C.lampOff);
+
+        // the money: two little windows
+        moneyBox(134, 238, 'YOU', players[0].cash, who === 0);
+        moneyBox(244, 238, 'DENNIS', players[1].cash, who === 1);
+
+        // the pay card on the side of the cabinet
+        drawPayCard();
+        if (flash > 0 && Math.floor(flash * 8) % 2) px(152, RY - CELL * 1.5 - 6, 176, CELL * 3 + 12, 'rgba(255,230,140,.18)');
+      }
+
+      function drawReel(r) {
+        var x = RX[r], top = RY - CELL * 1.5, R = reels[r];
+        px(x, top, RW, CELL * 3, C.glass);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x, top, RW, CELL * 3); ctx.clip();
+        var base = Math.floor(R.pos);
+        for (var k = -2; k <= 3; k++) {
+          var i = base + k, y = RY + (i - R.pos) * CELL;
+          drawSym(sym(r, i), x + RW / 2, Math.round(y));
+        }
+        // the curve of the drum: darker top and bottom
+        px(x, top, RW, 6, 'rgba(0,0,0,.25)'); px(x, top + CELL * 3 - 6, RW, 6, 'rgba(0,0,0,.25)');
+        px(x, top, RW, 2, 'rgba(0,0,0,.3)'); px(x, top + CELL * 3 - 2, RW, 2, 'rgba(0,0,0,.3)');
+        if (held[r] && stage !== 'spin') px(x, top, RW, CELL * 3, 'rgba(255,211,106,.16)');
+        ctx.restore();
+        px(x + RW, top, 4, CELL * 3, C.chromeLo);
+      }
+
+      function drawSym(s, cx, cy) {
+        var im = api.art('fruit/' + NAMES[s] + '.png');
+        if (im) { ctx.drawImage(im, Math.round(cx - im.width / 2), Math.round(cy - im.height / 2)); return; }
+        px(cx - 11, cy - 11, 22, 22, SYMC[s]);
+        small(cx, cy - 2, NAMES[s].slice(0, 3).toUpperCase(), s === BA ? '#e8b23a' : C.ink);
+      }
+
+      function lamp(x, y, label, on) {
+        px(x, y, 52, 10, on ? '#c98a28' : '#2a1410');
+        small(x + 26, y + 2, label, on ? C.ink : C.dim);
+      }
+
+      function moneyBox(x, y, label, cash, mine) {
+        px(x, y, 102, 26, '#0b0405');
+        px(x + 1, y + 1, 100, 24, '#140808');
+        small(x + 51, y + 4, label, mine ? C.lamp : C.dim);
+        seg(x + 51, y + 13, money(cash), mine ? '#ff6a4a' : '#7a3a2a');
+      }
+
+      function drawPayCard() {
+        var x = 368, y = 30, w = 106;
+        px(x - 2, y - 2, w + 4, 158, '#0b0405');
+        px(x, y, w, 154, C.glass);
+        small(x + w / 2, y + 5, 'PAYS ON A 10P GO', C.ink);
+        px(x + 4, y + 13, w - 8, 1, C.glassLo);
+        function row(yy, a, b) { small(x + 5, yy, a, C.ink, 'left'); small(x + w - 5, yy, b, '#8a1f14', 'right'); }
+        for (var s = 7; s >= 0; s--) row(y + 19 + (7 - s) * 14, NAMES[s].toUpperCase() + ' X3', money(PAY3[s]));
+        px(x + 4, y + 132, w - 8, 1, C.glassLo);
+        row(y + 137, 'CHERRY CHERRY', '30p');
+        row(y + 145, 'CHERRY LEFT', '10p');
+      }
+
+      // type: drawn on the canvas, so it stays inside the pixel grid
+      function title(cx, y, s) {
+        ctx.font = '16px "Abril Fatface", Georgia, serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillStyle = '#000'; ctx.fillText(s, cx + 1, y + 1);
+        ctx.fillStyle = flash > 0 ? '#fff3c4' : C.lamp; ctx.fillText(s, cx, y);
+      }
+      function small(cx, y, s, col, align) {
+        ctx.font = '5px "Press Start 2P", monospace'; ctx.textAlign = align || 'center'; ctx.textBaseline = 'top';
+        ctx.fillStyle = col; ctx.fillText(s, Math.round(cx), Math.round(y));
+      }
+      function seg(cx, y, s, col) {
+        ctx.font = '8px "Press Start 2P", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillStyle = col; ctx.fillText(s, Math.round(cx), Math.round(y));
+      }
+
+      /* ---- what the shell asks for ----------------------------- */
+      function hud() {
+        function side(i, label) {
+          return '<span' + (who === i ? ' class="rival"' : '') + '>' + label + ' <b>' + money(players[i].cash) + '</b></span>';
+        }
+        return side(0, 'YOU') + side(1, 'DENNIS') +
+               '<span>GO <b>' + Math.min(players[who].goes + (stage === 'hold' || stage === 'ready' ? 1 : 0), GOES) + '</b>/' + GOES + '</span>' +
+               '<span><b>10p</b> A GO</span>';
+      }
+
+      function prompt() {
+        var sub = note ? '<span>' + note + '</span>' : '';
+        if (who === 1) {
+          if (stage === 'hold') return 'Dennis is offered holds.<br><span>He has a system</span>';
+          if (stage === 'nudge') return 'Dennis has ' + nudges + ' nudge' + (nudges === 1 ? '' : 's') + '.<br><span>He leans in close</span>';
+          if (stage === 'spin') return 'Dennis spins.<br><span>&nbsp;</span>';
+          return 'Dennis\'s go.<br>' + (sub || '<span>He feeds it a ten pence piece</span>');
+        }
+        if (stage === 'ready') return 'Your go. Ten pence in.<br>' + (sub || '<span>Press to spin</span>');
+        if (stage === 'hold') return 'Holds offered.<br><span>Press when the light is on a reel to hold it, then on SPIN</span>';
+        if (stage === 'nudge') return nudges + ' nudge' + (nudges === 1 ? '' : 's') + '.<br><span>Press on a reel to drop the symbol above onto the line</span>';
+        if (stage === 'spin') return '&nbsp;<br><span>Come on...</span>';
+        return 'Your go.<br>' + sub;
+      }
+
+      function action() {
+        if (who === 1) return 'Dennis is up';
+        if (stage === 'ready') return 'Spin';
+        if (stage === 'hold') return cursor === 3 ? 'Spin' : (held[cursor] ? 'Release' : 'Hold');
+        if (stage === 'nudge') return cursor === 3 ? 'Done' : 'Nudge';
+        return '...';
+      }
+
+      function settled() { return done; }
+
+      function result() {
+        var a = players[0].cash, b = players[1].cash, v;
+        if (winner === 0 && a >= START) v = 'Up on the night. <b>Dennis says the machine was due, and you got his payout.</b>';
+        else if (winner === 0) v = 'You lost less than Dennis, <b>which in here counts as winning.</b>';
+        else if (winner === 1 && b >= START) v = 'Dennis walks away ahead. <b>He will tell everyone about his system.</b>';
+        else if (winner === 1) v = 'Dennis kept more of his pound. <b>The machine kept the rest of yours.</b>';
+        else v = 'Level pegging. <b>The machine is the only winner, as usual.</b>';
+        return {
+          score: a, rivalScore: b,
+          title: winner === 0 ? 'You beat Dennis' : (winner === 1 ? 'Dennis has it' : 'All square'),
+          verdict: v
+        };
+      }
+
+      return {
+        init: init, update: update, render: render, press: press,
+        settled: settled, result: result, hud: hud, prompt: prompt, action: action
+      };
+    }
+  });
+
   /* ---- the rest of the room, waiting on their modules ---- */
   [
-    { id: 'fruit', name: 'The Machine', sub: 'Nudge, hold, repent',
-      blurb: 'The cabinet in the corner that quietly takes whatever you won at the other tables.' },
     { id: 'doms', name: 'Dominoes', sub: 'Fives and threes',
       blurb: 'Play to a multiple of five or three and peg it. The old boy by the fire has not lost since 1987.' }
   ].forEach(function (g) {
