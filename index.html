@@ -885,6 +885,7 @@ h2{
       var REST = 0.86;                    // coin on coin
       var TURNS = 3, COINS = 5;
       var SPREAD = 0.2;                   // aim sweeps +/- this many radians off straight
+      var SLIDE_MIN = 6, SLIDE_MAX = 160; // px a coin slides at empty and full meter
 
       var C = {
         floor: '#1b1109',
@@ -931,7 +932,11 @@ h2{
           aim = liveAim(); stage = 'power'; t = 0;
         } else if (stage === 'power') {
           power = tri(t, 1.0);
-          var speed = 80 + power * 150;
+          // the meter maps straight onto how far the coin slides (on a clear
+          // board), so an empty bar barely leaves your hand and a full one
+          // goes off the far end. Every bed is somewhere in between.
+          var dist = SLIDE_MIN + power * (SLIDE_MAX - SLIDE_MIN);
+          var speed = Math.sqrt(2 * MU * dist);
           cur.vx = Math.sin(aim) * speed;
           cur.vy = -Math.cos(aim) * speed;
           coins.push(cur);
