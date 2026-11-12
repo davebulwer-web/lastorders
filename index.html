@@ -1,6 +1,24 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>Last Orders</title>
-<meta name="claude:viewport-fit-sides" content="cover">
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Last Orders: six pub games, one button</title>
+<meta name="description" content="Six old pub games in pixel art, played on one button: Bar Skittles, Shove Ha'penny, Ring the Bull, Toad in the Hole, The Machine and Dominoes, each against a regular at the bar. Free, no downloads, no accounts.">
+<meta name="theme-color" content="#15100b">
+<link rel="canonical" href="https://airetrogames.co.uk/games/last-orders/">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AI Retro Games">
+<meta property="og:title" content="Last Orders">
+<meta property="og:description" content="Six old pub games in pixel art, played on one button, against the regulars at the bar.">
+<meta property="og:url" content="https://airetrogames.co.uk/games/last-orders/">
+<meta property="og:image" content="https://airetrogames.co.uk/games/last-orders/social.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Last Orders: a pixel-art pub games room at closing time">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Inter:wght@400;500;600&family=Press+Start+2P&display=swap">
@@ -27,6 +45,8 @@
 }
 
 *{ box-sizing: border-box; }
+[hidden]{ display: none !important; }
+img{ max-width: 100%; }
 
 /* The same room the games are played in, out of focus behind the page. */
 body::before{
@@ -235,38 +255,30 @@ h2{
 .verdict{ margin:0; font-size:14px; color: var(--muted); }
 .verdict b{ color: var(--cream); font-weight:600; }
 
-/* ---- Build notes ------------------------------------------------- */
-.notes{
+/* ---- Footer ----------------------------------------------------- */
+.foot{
   border-top: 1px solid var(--rule);
-  padding-top: 18px;
-  display:flex; flex-direction:column; gap:10px;
+  padding-top: 16px;
+  display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between;
+  font-size: 13.5px; color: var(--muted);
 }
-.notes p{ margin:0; font-size: 13.5px; color: var(--muted); max-width: 64ch; }
-.notes code{
-  font-family: var(--pixel); font-size: 9px; color: var(--brass);
-  background: var(--panel); padding: 2px 5px; border-radius:2px;
-  white-space: nowrap;
-}
-.specs{ display:flex; gap:7px; flex-wrap:wrap; }
-.spec{
-  font-family: var(--pixel); font-size: 7.5px; letter-spacing:.06em;
-  background: var(--panel); border:1px solid var(--rule);
-  padding: 7px 9px; border-radius:2px; color: var(--muted);
-}
-.spec b{ color: var(--cream); font-weight:400; }
+.foot p{ margin:0; }
+.foot a{ color: var(--brass); }
 
 @media (prefers-reduced-motion: reduce){
   *{ transition: none !important; animation: none !important; }
   button:active{ transform:none; }
 }
 </style>
+</head>
+<body>
 
 <div class="wrap">
 
   <header>
     <div class="sign">
       <h1>Last Orders</h1>
-      <div class="est">PUB GAMES &middot; PROTOTYPE</div>
+      <div class="est">SIX PUB GAMES &middot; ONE BUTTON</div>
     </div>
     <p class="tagline">All six games in the room: Bar Skittles, Shove Ha'penny, Ring the Bull, Toad in the Hole, The Machine and Dominoes.</p>
   </header>
@@ -321,31 +333,10 @@ h2{
     <div class="games" id="games"></div>
   </div>
 
-  <div class="notes">
-    <h2>BUILD NOTES</h2>
-    <p>Every game is a module that honours one contract — <code>init</code>, <code>update</code>, <code>render</code>, <code>press</code>, <code>settled</code>, <code>result</code> — so the shell never knows what it is running. Adding the next one is a new file, not a new engine.</p>
-    <p>The playfield renders at 480&times;270 (16:9, an exact 4&times; of 1080p) and scales up by whole numbers with nearest-neighbour, so every sprite is drawn at its exact pixel size, never scaled:</p>
-    <div class="specs">
-      <span class="spec">BALL <b>14&times;14</b></span>
-      <span class="spec">SKITTLE <b>10&times;24</b></span>
-      <span class="spec">POST <b>12&times;54</b></span>
-      <span class="spec">PINT <b>11&times;17</b></span>
-      <span class="spec">ROOM <b>480&times;270</b></span>
-      <span class="spec">COIN <b>16&times;16</b></span>
-      <span class="spec">BULL WALL <b>480&times;270</b></span>
-      <span class="spec">REEL SYMBOL <b>32&times;32</b></span>
-      <span class="spec">PORTRAIT <b>64&times;64</b></span>
-    </div>
-    <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
-    <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
-    <p>Ring the Bull is the one game in true 3D: a ring on a 1.6m string from the ceiling, swinging on a sphere, seen from behind your shoulder. The hook stands 6cm off the wall, so the ring has to reach it with the hole lined up, and arrive slowly enough to drop on rather than bang the wall and jump off. Held back and let go, a pendulum keeps to its line, so where you point it is where it meets the wall.</p>
-    <p>Toad in the Hole is 3D as well: a brass disc pitched from eight feet at an 18-inch lead top, seen from where you stand. Lead is dead, so a toad stops near where it lands and only creeps; one that creeps over the hole slowly enough drops through. The table never moves, so it is ray-cast once, pixel by pixel, and kept. Pearl plays the finish: she knows going past 31 scratches the turn, and will take one point over two when one is all she needs.</p>
-    <p>The Machine has no physics, so the skill is in its features: holds offered before a go, nudges after one, and a light running along the buttons that you press on. Dennis reads every hold by spinning the unheld reels a few hundred times on a copy, and every nudge by trying each way of spending them, then has to catch the light, which he is slow at. The reels pay about two thirds of their money back on their own; the holds and nudges are what make up the difference.</p>
-    <p>Dominoes is Fives and Threes with one button: a light runs through every legal play, shown where it would go and what it would score, and you press on the one you want. Albert counts each play he could make, then deals you sixty hands from the tiles he cannot see and finds your best reply to each, so he will pass up a point to avoid giving you four.</p>
-    <p>Three ways to play. <b>Quick game</b> is one game against that table's regular. <b>Practice</b> takes the opponent away (each game skips their turns), except in Dominoes, which needs two, so Albert plays with his tiles face up. <b>Pub night</b> runs all six games in order, one against each regular, and ends with the night's tally. The regulars are 64&times;64 PixelLab portraits, painted with the pub backdrop as the style reference and shown at 1&times; or 2&times; so they stay crisp.</p>
-    <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
-    <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
-  </div>
+  <footer class="foot">
+    <p>One button: click or tap the table, or press Space or Enter.</p>
+    <p><a href="../../">More games at AI Retro Games</a></p>
+  </footer>
 
 </div>
 
@@ -3420,4 +3411,5 @@ h2{
 })();
 </script>
 
-</body></html>
+</body>
+</html>
