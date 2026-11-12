@@ -179,6 +179,37 @@ h2{
   display:inline-block; border-radius:2px;
 }
 
+/* ---- The regulars ----------------------------------------------- */
+.face{
+  width:64px; height:64px; flex:none;
+  image-rendering: pixelated; image-rendering: crisp-edges;
+  background: #0d0906; border:1px solid var(--rule); border-radius:2px;
+}
+.face.big{ width:128px; height:128px; }
+.rivalbar{ display:flex; gap:12px; align-items:center; justify-content:center; }
+.rivalbar .who{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.rivalbar b{ font-family: var(--display); font-weight:400; font-size:19px; color: var(--cream); line-height:1.1; }
+.rivalbar span{ font-size:13px; color: var(--muted); }
+.rivalbar .tag{ margin-left:4px; }
+.vs{ display:flex; gap:10px; align-items:center; }
+.vs .face{ width:64px; height:64px; }
+.vs small{ font-size:12.5px; color: var(--muted); line-height:1.35; }
+.vs small b{ color: var(--cream); font-weight:600; }
+
+/* ---- Modes ------------------------------------------------------- */
+.modes{ display:flex; gap:8px; flex-wrap:wrap; }
+.modes button[aria-pressed="true"]{ background: var(--brass); color:#1b1309; border-color:#8d6417; }
+.mode-note{ margin:0; font-size:13.5px; color: var(--muted); max-width: 64ch; }
+.night{
+  background: var(--panel); border:1px solid var(--rule); border-left:3px solid var(--brass);
+  border-radius:3px; padding:14px; display:flex; flex-direction:column; gap:10px;
+}
+.night h3{ font-family: var(--display); font-size:21px; margin:0; font-weight:400; }
+.night ol{ margin:0; padding-left: 20px; color: var(--muted); font-size:13.5px; display:flex; flex-direction:column; gap:3px; }
+.night li b{ color: var(--cream); font-weight:600; }
+.won{ color: var(--ok); } .lost{ color: var(--ember); }
+.game .num{ font-family: var(--pixel); font-size:9px; color: var(--brass); }
+
 /* ---- Scorecard --------------------------------------------------- */
 #card{ display:none; }
 #card.on{ display:block; }
@@ -191,6 +222,12 @@ h2{
   display:flex; flex-direction:column; gap:12px;
 }
 .card-inner h3{ font-family: var(--display); font-size: 25px; margin:0; line-height:1.15; }
+.card-head{ display:flex; gap:14px; align-items:center; }
+.card-head > div{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.card-mode{ font-family: var(--pixel); font-size:7px; letter-spacing:.1em; color: var(--brass); }
+.tally div.off{ display:none; }
+.nightlist{ margin:0; padding-left:20px; color: var(--muted); font-size:14px; display:flex; flex-direction:column; gap:4px; }
+.nightlist b{ color: var(--cream); font-weight:600; }
 .tally{ display:flex; gap:22px; flex-wrap:wrap; }
 .tally div{ display:flex; flex-direction:column; gap:3px; }
 .tally dt{ font-family: var(--pixel); font-size:7px; letter-spacing:.1em; color:var(--muted); }
@@ -236,6 +273,7 @@ h2{
 
   <!-- ===== Playfield ===== -->
   <div id="table">
+    <div class="rivalbar" id="rivalbar"></div>
     <div class="hud" id="hud"></div>
     <div id="stage"><canvas id="screen" width="480" height="270" aria-label="Game playfield"></canvas></div>
     <div class="prompt" id="prompt"></div>
@@ -248,14 +286,22 @@ h2{
   <!-- ===== Scorecard ===== -->
   <div id="card">
     <div class="card-inner">
-      <h3 id="card-title">Hand finished</h3>
-      <div class="tally">
+      <div class="card-head">
+        <img class="face big" id="card-face" alt="">
+        <div>
+          <div class="card-mode" id="card-mode"></div>
+          <h3 id="card-title">Hand finished</h3>
+        </div>
+      </div>
+      <div class="tally" id="card-tally">
         <div><dt>YOUR SCORE</dt><dd id="card-you">0</dd></div>
-        <div><dt id="card-rival-label">REG</dt><dd id="card-rival">0</dd></div>
-        <div><dt>BEST TONIGHT</dt><dd id="card-best">0</dd></div>
+        <div id="card-rival-box"><dt id="card-rival-label">REG</dt><dd id="card-rival">0</dd></div>
+        <div><dt id="card-best-label">BEST TONIGHT</dt><dd id="card-best">0</dd></div>
       </div>
       <p class="verdict" id="card-verdict"></p>
+      <ol class="nightlist" id="card-night" hidden></ol>
       <div class="row" style="justify-content:flex-start">
+        <button id="btn-next" class="primary" type="button" hidden>Next game</button>
         <button id="btn-again" class="primary" type="button">Another hand</button>
         <button id="btn-room" type="button">Back to the room</button>
       </div>
@@ -265,6 +311,13 @@ h2{
   <!-- ===== The games room ===== -->
   <div id="room">
     <h2>THE GAMES ROOM</h2>
+    <div class="modes" id="modes">
+      <button type="button" data-mode="quick" aria-pressed="true">Quick game</button>
+      <button type="button" data-mode="practice" aria-pressed="false">Practice</button>
+      <button type="button" data-mode="night" aria-pressed="false">Pub night</button>
+    </div>
+    <p class="mode-note" id="mode-note"></p>
+    <div class="night" id="night" hidden></div>
     <div class="games" id="games"></div>
   </div>
 
@@ -281,6 +334,7 @@ h2{
       <span class="spec">COIN <b>16&times;16</b></span>
       <span class="spec">BULL WALL <b>480&times;270</b></span>
       <span class="spec">REEL SYMBOL <b>32&times;32</b></span>
+      <span class="spec">PORTRAIT <b>64&times;64</b></span>
     </div>
     <p>Opponents play the real game, turn about, on the same physics as you. Before each shot they try a few hundred lines and weights on a copy of the table, keep the one whose neighbours also score (so a small slip still pays), then play it with a character's own amount of error. Making someone harder or kinder is two numbers.</p>
     <p>Art lives in <code>art/</code> as PNGs drawn 1:1 (made with PixelLab). The room backdrop is the shell's layer: every game draws it first, and the page shows it again, blurred, behind everything. Anything missing falls back to the placeholder blocks.</p>
@@ -288,6 +342,7 @@ h2{
     <p>Toad in the Hole is 3D as well: a brass disc pitched from eight feet at an 18-inch lead top, seen from where you stand. Lead is dead, so a toad stops near where it lands and only creeps; one that creeps over the hole slowly enough drops through. The table never moves, so it is ray-cast once, pixel by pixel, and kept. Pearl plays the finish: she knows going past 31 scratches the turn, and will take one point over two when one is all she needs.</p>
     <p>The Machine has no physics, so the skill is in its features: holds offered before a go, nudges after one, and a light running along the buttons that you press on. Dennis reads every hold by spinning the unheld reels a few hundred times on a copy, and every nudge by trying each way of spending them, then has to catch the light, which he is slow at. The reels pay about two thirds of their money back on their own; the holds and nudges are what make up the difference.</p>
     <p>Dominoes is Fives and Threes with one button: a light runs through every legal play, shown where it would go and what it would score, and you press on the one you want. Albert counts each play he could make, then deals you sixty hands from the tiles he cannot see and finds your best reply to each, so he will pass up a point to avoid giving you four.</p>
+    <p>Three ways to play. <b>Quick game</b> is one game against that table's regular. <b>Practice</b> takes the opponent away (each game skips their turns), except in Dominoes, which needs two, so Albert plays with his tiles face up. <b>Pub night</b> runs all six games in order, one against each regular, and ends with the night's tally. The regulars are 64&times;64 PixelLab portraits, painted with the pub backdrop as the style reference and shown at 1&times; or 2&times; so they stay crisp.</p>
     <p>Physics runs on a flat top-down plane; the view is a 3/4 squash of 0.55 on the vertical, which is why the ball's circular swing reads as an ellipse. Sprites are anchored at the base and drawn back to front.</p>
     <p>The ball starts at full stretch, so the chain can only ever take away its <em>outward</em> speed — swing it sideways and all that pace survives. The post is solid and the chain is shorter than the distance to the pins, so going round it is the only route. Every radian of swing winds a little chain onto the post, bringing the ball in a ring at a time: the back row on the first pass, the middle on the second, the front on the third if there's still life in it.</p>
   </div>
@@ -339,7 +394,9 @@ h2{
     screen: 'room',     // room | play | card
     game: null,         // live module instance
     def: null,          // its definition
-    best: {}            // best score per game id, this session
+    best: {},           // best score per game id, this session
+    mode: 'quick',      // quick | practice | night
+    night: null         // { i, results } while a pub night is on
   };
 
   /* ---- pixel-perfect-ish scaling ---- */
@@ -416,46 +473,192 @@ h2{
     if (which === 'play') fit();
   }
 
+  /* ---- the regulars: one for each game ---- */
+  var PEOPLE = {
+    Reg:    { img: 'art/people/reg.png',    line: 'Skittles captain. Steady arm, not a machine.' },
+    Edna:   { img: 'art/people/edna.png',   line: 'Forty years on this board.' },
+    Terry:  { img: 'art/people/terry.png',  line: 'The landlord. It\'s his hook.' },
+    Pearl:  { img: 'art/people/pearl.png',  line: 'Sussex born, Sussex wrist.' },
+    Dennis: { img: 'art/people/dennis.png', line: 'Has a system.' },
+    Albert: { img: 'art/people/albert.png', line: 'Has not lost since 1987.' }
+  };
+  function person(name) { return PEOPLE[name] || { img: '', line: '' }; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  var MODE_NOTES = {
+    quick: 'Pick a game and take on the regular who plays it.',
+    practice: 'No opponent, no pressure. Play on your own to learn the table. In Dominoes Albert lays his tiles face up so you can see what he is doing.',
+    night: 'All six games in a row, one against each regular. Win more than you lose and you can buy the next round.'
+  };
+
+  function playable() { return GAMES.filter(function (g) { return g.available; }); }
+
   function play(def) {
     state.def = def;
-    state.game = def.create({ W: W, H: H, art: art, backdrop: backdrop });
+    state.game = def.create({ W: W, H: H, art: art, backdrop: backdrop, solo: state.mode === 'practice' });
     state.game.init();
     lastHud = lastPrompt = lastAct = '';
     acc = 0; last = 0;
+    paintRivalBar(def);
     show('play');
   }
 
-  function showCard(res) {
-    var id = state.def.id;
-    state.best[id] = Math.max(state.best[id] || 0, res.score);
+  function paintRivalBar(def) {
+    var el = document.getElementById('rivalbar');
+    if (state.mode === 'practice' && def.id === 'doms') {
+      el.innerHTML = '<img class="face" src="' + person(def.rival).img + '" alt="">' +
+        '<div class="who"><b>Practice vs ' + esc(def.rival) + '</b><span>He is playing with his tiles face up, so you can see his thinking.</span></div>';
+      return;
+    }
+    if (state.mode === 'practice') {
+      el.innerHTML = '<div class="who"><b>' + esc(def.name) + '</b><span>Practice: just you and the table</span></div>';
+      return;
+    }
+    var p = person(def.rival), tag = '';
+    if (state.mode === 'night' && state.night) {
+      tag = '<span class="tag">GAME ' + (state.night.i + 1) + ' OF ' + playable().length + '</span>';
+    }
+    el.innerHTML = '<img class="face" src="' + p.img + '" alt="">' +
+      '<div class="who"><b>vs ' + esc(def.rival) + tag + '</b><span>' + esc(p.line) + '</span></div>';
+  }
 
-    document.getElementById('card-title').textContent = res.title;
+  function nightTally() {
+    var r = state.night.results, w = 0, l = 0, d = 0;
+    r.forEach(function (x) { if (x.won) w++; else if (x.drawn) d++; else l++; });
+    return { won: w, lost: l, drawn: d };
+  }
+
+  function showCard(res) {
+    var id = state.def.id, mode = state.mode;
+    // practice Dominoes still has Albert at the table, just open-handed
+    var solo = mode === 'practice' && id !== 'doms';
+    var won = res.score > res.rivalScore, drawn = res.score === res.rivalScore;
+    var face = document.getElementById('card-face');
+    var title = res.title, verdict = res.verdict;
+    if (solo) {
+      title = state.def.name + ': practice';
+      verdict = 'You scored <b>' + res.score + '</b> on your own. Switch to Quick game when you want someone to beat.';
+      face.hidden = true;
+    } else {
+      face.hidden = false;
+      face.src = person(state.def.rival).img;
+    }
+    if (mode === 'quick') state.best[id] = Math.max(state.best[id] || 0, res.score);
+
+    document.getElementById('card-mode').textContent =
+      mode === 'practice' ? (solo ? 'PRACTICE' : 'PRACTICE · CARDS ON THE TABLE') :
+      mode === 'night' ? 'PUB NIGHT · GAME ' + (state.night.i + 1) + ' OF ' + playable().length : 'QUICK GAME';
+    document.getElementById('card-title').textContent = title;
     document.getElementById('card-you').textContent = res.score;
+    document.getElementById('card-rival-box').classList.toggle('off', solo);
     document.getElementById('card-rival-label').textContent = state.def.rival.toUpperCase();
     document.getElementById('card-rival').textContent = res.rivalScore;
-    document.getElementById('card-best').textContent = state.best[id];
-    document.getElementById('card-verdict').innerHTML = res.verdict;
+    document.getElementById('card-best-label').parentNode.classList.toggle('off', mode !== 'quick');
+    document.getElementById('card-best').textContent = state.best[id] || 0;
+    document.getElementById('card-verdict').innerHTML = verdict;
+
+    var next = document.getElementById('btn-next'), again = document.getElementById('btn-again');
+    var list = document.getElementById('card-night');
+    list.hidden = true; next.hidden = true; again.hidden = false;
+    document.getElementById('card-tally').hidden = false;
+    again.textContent = mode === 'practice' ? 'Practise again' : 'Another game';
+
+    if (mode === 'night' && state.night) {
+      state.night.results.push({ id: id, name: state.def.name, rival: state.def.rival, you: res.score, them: res.rivalScore, won: won, drawn: drawn });
+      var games = playable(), n = state.night.results.length;
+      again.hidden = true;
+      if (n < games.length) {
+        var g = games[n];
+        next.hidden = false;
+        next.textContent = 'Next: ' + g.name + ' vs ' + g.rival;
+      } else {
+        var t = nightTally();
+        list.innerHTML = state.night.results.map(function (x) {
+          return '<li class="' + (x.won ? 'won' : x.drawn ? '' : 'lost') + '"><b>' + esc(x.name) + '</b> vs ' + esc(x.rival) + ': ' +
+            x.you + ' to ' + x.them + (x.won ? ' (won)' : x.drawn ? ' (drawn)' : ' (lost)') + '</li>';
+        }).join('');
+        list.hidden = false;
+        document.getElementById('card-mode').textContent = 'PUB NIGHT · FINAL TALLY';
+        document.getElementById('card-title').textContent = 'Last orders: you won ' + t.won + ' of ' + n;
+        document.getElementById('card-tally').hidden = true;
+        document.getElementById('card-verdict').innerHTML =
+          (t.won === n ? 'A clean sweep. Nobody in this pub has done that since Albert in 1987, and he is not pleased.' :
+           t.won > t.lost ? 'A good night. The regulars will be talking about it, mostly to each other, mostly behind your back.' :
+           t.won === t.lost ? 'Honours even. Everyone buys their own.' :
+           'The regulars had the better of you tonight. Your round, I think.');
+        again.hidden = false;
+        again.textContent = 'Another night';
+        state.night.done = true;
+      }
+    }
     show('card');
   }
 
-  document.getElementById('btn-quit').addEventListener('click', function () { state.game = null; show('room'); });
-  document.getElementById('btn-room').addEventListener('click', function () { show('room'); });
-  document.getElementById('btn-again').addEventListener('click', function () { play(state.def); });
+  function startNight() {
+    state.mode = 'night';
+    state.night = { i: 0, results: [] };
+    play(playable()[0]);
+  }
+
+  document.getElementById('btn-quit').addEventListener('click', function () {
+    state.game = null;
+    if (state.mode === 'night') state.night = null;   // walking out abandons the night
+    paintRoom();
+    show('room');
+  });
+  document.getElementById('btn-room').addEventListener('click', function () {
+    if (state.mode === 'night') state.night = null;
+    paintRoom();
+    show('room');
+  });
+  document.getElementById('btn-again').addEventListener('click', function () {
+    if (state.mode === 'night') startNight(); else play(state.def);
+  });
+  document.getElementById('btn-next').addEventListener('click', function () {
+    state.night.i = state.night.results.length;
+    play(playable()[state.night.i]);
+  });
 
   /* ---- the room ---- */
+  function setMode(m) {
+    state.mode = m;
+    document.querySelectorAll('#modes [data-mode]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false');
+    });
+    paintRoom();
+  }
+  document.querySelectorAll('#modes [data-mode]').forEach(function (b) {
+    b.addEventListener('click', function () { setMode(b.dataset.mode); });
+  });
+
   function paintRoom() {
+    var mode = state.mode;
+    document.getElementById('mode-note').textContent = MODE_NOTES[mode];
+    var night = document.getElementById('night');
+    night.hidden = mode !== 'night';
+    if (mode === 'night') {
+      night.innerHTML = '<h3>Tonight\'s running order</h3><ol>' +
+        playable().map(function (g) { return '<li><b>' + esc(g.name) + '</b> vs ' + esc(g.rival) + '</li>'; }).join('') +
+        '</ol><div><button class="primary" type="button" id="btn-night">Start the night</button></div>';
+      document.getElementById('btn-night').addEventListener('click', startNight);
+    }
+
     var el = document.getElementById('games');
     el.innerHTML = '';
+    var order = 0;
     GAMES.forEach(function (g) {
       var card = document.createElement('div');
       card.className = 'game' + (g.available ? '' : ' locked');
-      var foot = g.available
-        ? '<button class="primary" type="button" data-play="' + g.id + '">Have a go</button>'
-        : '<span class="tag">NOT BUILT YET</span>';
+      var p = person(g.rival), foot;
+      if (!g.available) foot = '<span class="tag">NOT BUILT YET</span>';
+      else if (mode === 'night') foot = '<span class="num">GAME ' + (++order) + '</span>';
+      else foot = '<button class="primary" type="button" data-play="' + g.id + '">' + (mode === 'practice' ? 'Practise' : 'Have a go') + '</button>';
+      var vs = mode === 'practice' ? '' :
+        '<div class="vs"><img class="face" src="' + p.img + '" alt=""><small><b>vs ' + esc(g.rival) + '</b><br>' + esc(p.line) + '</small></div>';
       card.innerHTML =
         '<div class="sub">' + g.sub + '</div>' +
         '<h3>' + g.name + '</h3>' +
-        '<p>' + g.blurb + '</p>' +
+        '<p>' + g.blurb + '</p>' + vs +
         '<footer>' + foot + '</footer>';
       el.appendChild(card);
     });
@@ -840,6 +1043,10 @@ h2{
       }
 
       function endTurn() {
+        if (api.solo) {                     // practice: nobody else at the table
+          if (players[0].score >= GOAL) { done = true; stage = 'over'; return; }
+          round++; startTurn(); return;
+        }
         if (cur === 1) {
           // both have had the same number of turns: is anyone there yet?
           var a = players[0].score, b = players[1].score;
@@ -1336,6 +1543,7 @@ h2{
 
       function endTurn() {
         if (closedCount(chalk[who]) === BEDS) { winner = who; done = true; stage = 'over'; return; }
+        if (api.solo) { round++; newTurn(); return; }   // practice: nobody else at the board
         if (who === 1) round++;
         who = 1 - who;
         newTurn();
@@ -1739,6 +1947,10 @@ h2{
       }
 
       function endTurn() {
+        if (api.solo) {                     // practice: nobody else at the table
+          if (players[0].score >= GOAL) { done = true; stage = 'over'; return; }
+          round++; startTurn(); return;
+        }
         if (cur === 1) {
           // both have had the same number of turns: is anyone there yet?
           var a = players[0].score, b = players[1].score;
@@ -2173,6 +2385,7 @@ h2{
 
       function endTurn() {
         if (winner >= 0) { done = true; stage = 'over'; return; }
+        if (api.solo) { round++; newTurn(); return; }   // practice: nobody else at the table
         if (who === 1) round++;
         who = 1 - who;
         newTurn();
@@ -2560,7 +2773,7 @@ h2{
       function endGo() {
         // turn about; anyone who has had ten goes, or cannot find ten
         // pence for another, sits out, and when both are out it is over
-        function can(i) { return players[i].goes < GOES && players[i].cash >= STAKE; }
+        function can(i) { return !(api.solo && i === 1) && players[i].goes < GOES && players[i].cash >= STAKE; }
         var next = can(1 - who) ? 1 - who : (can(who) ? who : -1);
         if (next < 0) {
           var a = players[0].cash, b = players[1].cash;
@@ -3046,7 +3259,7 @@ h2{
 
       // one half of a tile: an s x s square with its spots
       function half(x, y, s, n, rot) {
-        var step = s >= 14 ? 4 : 3, off = Math.round((s - 2 * step - 2) / 2), d = s >= 14 ? 2 : 2;
+        var step = s >= 14 ? 4 : (s >= 10 ? 3 : 2), d = s >= 10 ? 2 : 1, off = Math.round((s - 2 * step - d) / 2);
         for (var i = 0; i < PIPS[n].length; i++) {
           var p = PIPS[n][i], c = rot ? [p[1], p[0]] : p;
           px(x + off + c[0] * step, y + off + c[1] * step, d, d, C.pip);
@@ -3104,7 +3317,11 @@ h2{
 
         // Albert's hand, face down along the top
         var n1 = hands[1].length;
-        for (var i = 0; i < n1; i++) tileBack(240 - n1 * 7 + i * 14, 6, 12, 18);
+        for (var i = 0; i < n1; i++) {
+          // in practice he plays with his hand open, so you can see what he is up to
+          if (api.solo) tile(240 - n1 * 5 + i * 10, 4, 7, hands[1][i][0], hands[1][i][1], true, false);
+          else tileBack(240 - n1 * 7 + i * 14, 6, 12, 18);
+        }
         // the boneyard
         for (var b = 0; b < bone.length; b++) tileBack(404 + (b % 7) * 7, 4 + Math.floor(b / 7) * 9, 6, 8);
 
